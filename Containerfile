@@ -30,7 +30,7 @@ LABEL ostree.bootable=1
 # the CI (the committed value here is the DaemonCores-VE key inherited at the
 # cut-over date — replaced by the vanilla repo key at its first rotation).
 ARG BOOTC_APT_URL=https://daemoncores.github.io/proxmox-ve-bootc/
-ARG BOOTC_GPG_SHA256=4920000cfcd8f5a618822c8e57222a3c10768d2efb8c0250a71a19ba0c76ff55
+ARG BOOTC_GPG_SHA256=07a57112edcbe89680a46a52b44fa5b9d3217420d365eb3a9b37367f8173b787
 # The Proxmox archive key is an upstream artifact (not our secret-derived repo
 # key): its pin stays committed, refreshed with the release that fetches it.
 ARG PVE_GPG_SHA256=136673be77aba35dcce385b28737689ad64fd785a797e57897589aed08db6e45
