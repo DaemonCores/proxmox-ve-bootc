@@ -413,4 +413,4 @@ packages:
         env:
           PKG: pve-cluster
           UP_COMMIT: 66c87e0e7587a247f879f6f59e3bb5f3dd008e1f
-          SRC_VER: 9.1.7.1+dcve1
+          SRC_VER: 9.1.7.1+bootc1
