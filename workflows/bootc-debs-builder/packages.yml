@@ -385,6 +385,16 @@ packages:
         # CONFIG_KLP_BUILD, so skip it unless the merged config enables it.
         grep -q '^CONFIG_KLP_BUILD=y' "${SRCDIR}/.config" \
           || export KERNEL_MAKE_ARGS="ARCH_HAS_KLP=n"
+        # The 27/28 rolling mismatch: the cloned packaging rules are OLDER
+        # than the kernel version resolved from the repo (master 7.0.14-27 vs
+        # tree -28, the WARN at the prepare), so their ARCH_HAS_KLP=n hook
+        # does not exist yet and objtool builds klp-checksum.o UNCONDITIONALLY
+        # — which does not compile against the 28 tree. Remove the tool from
+        # the tree outright (KLP stays off: nothing on a PVE LXC host
+        # livepatches).
+        sed -i '/klp-checksum/d' "${SRCDIR}/tools/objtool/Kbuild" \
+          "${SRCDIR}/tools/objtool/Makefile" 2>/dev/null || true
+        rm -f "${SRCDIR}/tools/objtool/klp-checksum.c"
         KCFLAGS=$(kernel_flavour_kcflags "${KERNEL_ARCH_LEVEL}")
         kernel_build_debs "${SRCDIR}" bindeb-pkg "${KCFLAGS}"
       else
