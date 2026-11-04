@@ -6,5 +6,7 @@
 # outside their own stage.
 Types: deb
 URIs: https://daemoncores.github.io/proxmox-ve-bootc
-Suites: ./
+Suites: trixie
+Components: main
+Enabled: yes
 Signed-By: /usr/share/keyrings/proxmox-ve-bootc-keyring.gpg
