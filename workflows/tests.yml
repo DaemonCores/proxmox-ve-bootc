@@ -250,9 +250,11 @@ tests:
     expect: +bootc
     diag: |
       dpkg-query -W -f='${Version}\n' proxmox-kernel-helper 2>&1; apt-cache policy proxmox-kernel-helper 2>&1 | head -n 6
-  - name: ifupdown2 repacked
-    run: dpkg-query -W -f='${Version}' ifupdown2
-    expect: +bootc
+  - name: ifupdown2 ships unmodified upstream
+    run: |
+      v=$(dpkg-query -W -f='${Version}' ifupdown2)
+      echo "$v" | grep -q '\+' && { echo "ifupdown2 is repacked ($v); vanilla = upstream nu"; exit 1; }
+      echo "ifupdown2 upstream: $v"
     diag: |
       dpkg-query -W -f='${Version}\n' ifupdown2 2>&1; apt-cache policy ifupdown2 2>&1 | head -n 6
 
@@ -275,46 +277,6 @@ tests:
       ls -la /usr/sbin/grub-install 2>&1
       head -n 20 /usr/sbin/grub-install 2>&1
 
-  # ── dc-zramctl / swap ──────────────────────────────────────────────────
-  - name: dc-zramctl active
-    run: systemctl is-active dc-zramctl
-    diag: |
-      systemctl status dc-zramctl --no-pager -l 2>&1 | tail -n 12
-      journalctl -b -u dc-zramctl --no-pager 2>&1 | tail -n 20
-      echo "--- modprobe zram num_devices=0 ---"
-      modprobe zram num_devices=0 2>&1 && echo "modprobe OK" || echo "modprobe FAILED"
-      echo "--- /sys/class/zram-control ---"; ls -l /sys/class/zram-control/ 2>&1
-      echo "--- /sys/block/zram* ---"; ls -l /sys/block/zram* 2>&1 || echo "no zram device"
-      echo "--- zram.ko in module tree ---"
-      ls /usr/lib/modules/*/kernel/drivers/block/zram/ 2>&1 || echo "no zram module in tree"
-  # NOTE: no separate "a zram device exists" test — with num_devices=0 the module
-  # creates no default device, so /dev/zram0 exists only once the daemon has
-  # seeded it as swap, which "swap is zram-only" below already asserts (stronger).
-  - name: swap is zram-only
-    run: swapon --show=NAME --noheadings | grep -qx /dev/zram0
-    diag: |
-      swapon --show 2>&1
-      echo "--- /proc/swaps ---"; cat /proc/swaps 2>&1
-  - name: no disk or file swap
-    run: "! swapon --show=NAME --noheadings | grep -qv zram"
-    diag: |
-      swapon --show 2>&1
-      echo "--- /proc/swaps ---"; cat /proc/swaps 2>&1
-
-  # ── dc-firewall-seed ───────────────────────────────────────────────────
-  - name: cluster firewall seeded into pmxcfs
-    run: test -f /etc/pve/firewall/cluster.fw
-    diag: |
-      ls -la /etc/pve/firewall/ 2>&1
-      systemctl status dc-firewall-seed --no-pager -l 2>&1 | tail -n 12
-      journalctl -b -u dc-firewall-seed --no-pager 2>&1 | tail -n 20
-  - name: node firewall seeded into pmxcfs
-    run: test -f /etc/pve/local/host.fw
-    diag: |
-      echo "/etc/pve/local -> $(readlink /etc/pve/local 2>&1)"
-      ls -la /etc/pve/local/ 2>&1
-      journalctl -b -u dc-firewall-seed --no-pager 2>&1 | tail -n 20
-
   # ── KSM / ballooning ───────────────────────────────────────────────────
   - name: ksmtuned active
     run: systemctl is-active ksmtuned
@@ -322,42 +284,28 @@ tests:
       systemctl status ksmtuned --no-pager -l 2>&1 | tail -n 12
       journalctl -b -u ksmtuned --no-pager 2>&1 | tail -n 15
 
-  # ── custom tools shipped ───────────────────────────────────────────────
-  - name: dc-config-zfs present
-    run: command -v dc-config-zfs
-    diag: |
-      command -v dc-config-zfs 2>&1 || echo absent; dpkg -l 2>&1 | grep -i dc-config-zfs
-  - name: fanctl present
-    run: command -v fanctl
-    diag: |
-      command -v fanctl 2>&1 || echo absent; dpkg -l 2>&1 | grep -i fanctl
-  - name: powerctl present
-    run: command -v powerctl
-    diag: |
-      command -v powerctl 2>&1 || echo absent; dpkg -l 2>&1 | grep -i powerctl
-  - name: compose2bootc present
-    run: command -v compose2bootc
-    diag: |
-      command -v compose2bootc 2>&1 || echo absent; dpkg -l 2>&1 | grep -i compose2bootc
-  - name: pvect-ostree present
-    run: command -v pvect-ostree
-    diag: |
-      command -v pvect-ostree 2>&1 || echo absent; dpkg -l 2>&1 | grep -i pvect-ostree
-
-  # ── THP arbitration (owner, 2026-11-03 13:05 — supersedes 12:14/12:55) ──
-  # The DEFAULT image profile is THP ALWAYS (the kernel pin lives in the
-  # shared kconfig fragment; full-LXC prime). The thin -thpnever-<flavour>
-  # twins ship /usr/share/dc-ve-thp-profile=never, the bootc kargs.d karg
-  # (transparent_hugepage=never) and the boot tmpfiles `w!` rule; this test
-  # asserts the live sysfs state against the profile marker, so BOTH
-  # profiles are proven by the same run:
-  #   default = [always], -thpnever-<flavour> = [never].
-  - name: THP state matches the image profile (default always / twin never)
+  # ── resolver chain (openresolv + dnsmasq) ──────────────────────────────
+  - name: openresolv installed and resolver chain wired
     run: |
-      state="$(cat /sys/kernel/mm/transparent_hugepage/enabled)"
-      profile="$(cat /usr/share/dc-ve-thp-profile 2>/dev/null || printf always)"
-      echo "$state" | grep -qE "\[${profile}\]"
+      dpkg-query -W -f='${db:Status-Abbrev}' openresolv | grep -q '^ii '
+      cat /etc/resolvconf.conf 2>&1
     diag: |
+      dpkg-query -W -f='${Version}\n' openresolv 2>&1
+      cat /etc/resolvconf.conf 2>&1
+      cat /etc/dnsmasq.conf 2>&1
+      ls -la /run/dnsmasq/ 2>&1
+
+  # ── THP default of the vanilla image (ruling R-804, owner 03/11) ────────
+  # The vanilla images boot NEVER (karg transparent_hugepage=never baked in
+  # the vanilla kargs.d on the one compiled kernel). The fork thin
+  # -thpalways twins flip the same karg; their own test lives in the fork.
+  - name: THP boots never on the vanilla image
+    run: |
+      test "$(awk '/transparent_hugepage=/{print $1}' /proc/cmdline)" = "transparent_hugepage=never"
+      state="$(cat /sys/kernel/mm/transparent_hugepage/enabled)"
+      echo "$state" | grep -q '\[never\]'
+    diag: |
+      cat /proc/cmdline 2>&1
       cat /sys/kernel/mm/transparent_hugepage/enabled 2>&1
-      cat /usr/share/dc-ve-thp-profile 2>&1
-      cat /proc/cmdline
+      ls -la /usr/lib/bootc/kargs.d/ 2>&1
+      for f in /usr/lib/bootc/kargs.d/*; do echo "-- $f"; cat "$f"; done

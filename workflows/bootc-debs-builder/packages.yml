@@ -31,7 +31,7 @@ packages:
       libpve-storage-perl:
         env:
           PKG: libpve-storage-perl
-          VER_SUFFIX: +dcve1
+          VER_SUFFIX: +bootc1
       pve-manager:
         env:
           PKG: pve-manager
@@ -121,7 +121,16 @@ packages:
         env:
           UPSTREAM_PKG: libpve-notify-perl
         upstream: libpve-notify-perl
+      ifupdown2:
+        env:
+          UPSTREAM_PKG: ifupdown2
+        upstream: ifupdown2
 
+  # class overlay-tree: repack of an upstream package with a plain overlay
+  # tree on top (fixes and drop-ins only — the DaemonCores-VE fork owns its
+  # own overlay builds for the fork-only bits, e.g. the ifupdown2
+  # autoconf/domain-set exec tools: the vanilla ifupdown2 is the UNMODIFIED
+  # upstream deb, published by the upstream-all class above).
   - name: overlay-tree
     variant-env: PKG
     variant-source: "{variant}"
@@ -131,12 +140,6 @@ packages:
       deb_overlay_tree "${PKG}" "${VER_SUFFIX}" "${PKG}" ${EXTRA_EXEC:-}
     deb-glob: "{variant}_*"
     variants:
-      ifupdown2:
-        env:
-          PKG: ifupdown2
-          VER_SUFFIX: +bootc5
-          EXTRA_EXEC: usr/sbin/ifupdown2-autoconf usr/sbin/domain-set
-        upstream: ifupdown2
       chrony:
         env:
           PKG: chrony
@@ -147,48 +150,6 @@ packages:
           PKG: openipmi
           VER_SUFFIX: +bootc1
         upstream: openipmi
-
-  - name: custom
-    variant-env: PKG
-    variant-source: "{variant}"
-    env:
-      HELPERS_VER: 6
-    build: |
-      deb_custom "${PKG}" "${PKG_VER}" "${PKG}"
-    deb-glob: "{variant}_*"
-    variants:
-      fanctl:
-        env:
-          PKG: fanctl
-          PKG_VER: 1.2.1
-      powerctl:
-        env:
-          PKG: powerctl
-          PKG_VER: 1.1.0
-      dc-firewall-seed:
-        env:
-          PKG: dc-firewall-seed
-          PKG_VER: 1.0.0
-      dc-config-zfs:
-        env:
-          PKG: dc-config-zfs
-          PKG_VER: 1.0.0
-      dc-zramctl:
-        env:
-          PKG: dc-zramctl
-          PKG_VER: 1.0.0
-      pvect-ostree:
-        env:
-          PKG: pvect-ostree
-          PKG_VER: 1.0.0
-      compose2bootc:
-        env:
-          PKG: compose2bootc
-          PKG_VER: 0.1.0
-      dc-gpu-lxc:
-        env:
-          PKG: dc-gpu-lxc
-          PKG_VER: 1.0.0
 
   # ===========================================================================
   # kernel-pve: the PVE packaging + the SHARED XanMod patch set, the

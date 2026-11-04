@@ -1,15 +1,15 @@
 #####################################################################################
-# Shared base for the DaemonCores VE images
+# Shared base for the Proxmox VE bootc images
 #####################################################################################
 # The shared image pipeline (DaemonCores-CI/.github/workflows/bootc-build.yml)
-# builds this manifest once per build job as localhost/debian-bootc-base and
+# builds this manifest once per build job as localhost/proxmox-ve-bootc-base and
 # passes it to every product Containerfile as BASE_IMAGE. It is never pushed.
 #
-# Unlike debian-bootc's Containerfile.base (which assembles a Debian root from
-# scratch), VE derives from the PUBLISHED debian-bootc base image: the bootc
+# The base derives from the PUBLISHED debian-bootc base image: the bootc
 # toolchain, kernel, ostree migration and initramfs come from it, and the
-# product Containerfile only layers the Proxmox packages from the VE APT
-# repository.
+# product Containerfile only layers the Proxmox packages from THIS
+# repository's APT repository (fix repacks only — the DaemonCores-VE fork
+# image adds its own repository in its own Containerfile).
 #
 # The FROM line feeds the image content hash (the base digest is part of the
 # identity), so a newer published base invalidates the cached image. The tag
@@ -28,15 +28,15 @@ FROM ghcr.io/daemoncores/debian-bootc:latest_${ARCH}
 # BOOTC_APT_URL). Empty args mean "repository not configured": plain local
 # builds of the base stay inert, and nothing is committed after a key
 # rotation. Only the keyring is provisioned here: the sources stanza is owned
-# by the product Containerfile (src/pvepreinstall ships daemoncores-ve.sources
+# by the product Containerfile (src/pvepreinstall ships proxmox-ve-bootc.sources
 # with the matching Signed-By path), so the repository is never declared twice.
 ARG BOOTC_APT_URL=""
 ARG BOOTC_GPG_SHA256=""
 # hadolint ignore=DL4006
 RUN if [ -n "${BOOTC_APT_URL}" ] && [ -n "${BOOTC_GPG_SHA256}" ]; then \
         url="${BOOTC_APT_URL%/}"; \
-        wget -nv -O /usr/share/keyrings/daemoncores-ve-keyring.gpg "${url}/gpg.key" \
-        && printf '%s  /usr/share/keyrings/daemoncores-ve-keyring.gpg\n' "${BOOTC_GPG_SHA256}" \
+        wget -nv -O /usr/share/keyrings/proxmox-ve-bootc-keyring.gpg "${url}/gpg.key" \
+        && printf '%s  /usr/share/keyrings/proxmox-ve-bootc-keyring.gpg\n' "${BOOTC_GPG_SHA256}" \
             | sha256sum -c -; \
     fi
 STOPSIGNAL SIGRTMIN+3

@@ -1,5 +1,5 @@
 name: Feature Request
-description: Suggest a new feature or enhancement for DaemonCores-VE
+description: Suggest a new feature or enhancement for proxmox-ve-bootc
 labels: ["enhancement", "triage"]
 body:
   - type: textarea

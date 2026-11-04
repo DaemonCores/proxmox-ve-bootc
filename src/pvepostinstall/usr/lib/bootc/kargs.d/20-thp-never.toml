@@ -1,0 +1,10 @@
+# THP default of the vanilla image profiles (ruling R-804): the vanilla
+# proxmox-ve-bootc images boot with transparent_hugepage=never (the standard
+# VM workload line and the historical PVE profile). The kernel is compiled
+# with the THP=always default (shared kconfig fragment, ONE compile — no
+# rebuild), so the karg alone pins the mode. The DaemonCores-VE fork derives
+# thin -thpalways images from these never images by shipping the karg off /
+# =always in its own kargs.d; the standard PVE behaviour stays never here.
+kargs = [
+  "transparent_hugepage=never",
+]

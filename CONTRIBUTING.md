@@ -1,4 +1,4 @@
-# Contributing to DaemonCores-VE
+# Contributing to proxmox-ve-bootc
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/DaemonCores/.github/refs/heads/main/assets/banner.svg" alt="AstralEmu Banner" width="100%"/>

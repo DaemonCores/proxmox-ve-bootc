@@ -2,18 +2,17 @@
 # Base image
 #####################################################################################
 # The shared CI (bootc-build.yml) builds Containerfile.base once per job as
-# localhost/debian-bootc-base and passes it as BASE_IMAGE; the base's FROM
-# (the published debian-bootc image) feeds the image content hash. See
-# docs/ci-catchup-plan.md ("image build contract").
-ARG BASE_IMAGE=localhost/debian-bootc-base
+# localhost/proxmox-ve-bootc-base and passes it as BASE_IMAGE; the base's FROM
+# line feeds the image content hash (the base digest is part of the hash).
+ARG BASE_IMAGE=localhost/proxmox-ve-bootc-base
 FROM ${BASE_IMAGE}
 STOPSIGNAL SIGRTMIN+3
 
 # Environement Setup
-LABEL org.opencontainers.image.title="DaemonCores VE"
-LABEL org.opencontainers.image.description="DaemonCores VE — Debian 13 Trixie"
+LABEL org.opencontainers.image.title="Proxmox VE bootc"
+LABEL org.opencontainers.image.description="Vanilla Proxmox VE on Debian 13 Trixie, bootc/ostree — standard packaging and fixes only."
 LABEL org.opencontainers.image.base.name="ghcr.io/daemoncores/debian-bootc:latest"
-LABEL org.opencontainers.image.source="https://github.com/DaemonCores/DaemonCores-VE"
+LABEL org.opencontainers.image.source="https://github.com/DaemonCores/proxmox-ve-bootc"
 LABEL org.opencontainers.image.licenses="LGPL-2.1"
 LABEL containers.bootc=1
 LABEL ostree.bootable=1
@@ -26,8 +25,11 @@ LABEL ostree.bootable=1
 # and bootc-build.yml passes both build-args (BOOTC_GPG_SHA256 / BOOTC_APT_URL
 # env, consumed by build-arch.sh apt_build_args). Nothing to hand-edit after a
 # key rotation; the committed defaults only serve plain local podman builds.
-# The sources stanza below carries the same URL (src/pvepreinstall).
-ARG BOOTC_APT_URL=https://daemoncores.github.io/DaemonCores-VE/
+# The sources stanza below carries the same URL (src/pvepreinstall). The
+# value below is this repository's APT repo URL; its GPG digest is passed by
+# the CI (the committed value here is the DaemonCores-VE key inherited at the
+# cut-over date — replaced by the vanilla repo key at its first rotation).
+ARG BOOTC_APT_URL=https://daemoncores.github.io/proxmox-ve-bootc/
 ARG BOOTC_GPG_SHA256=4920000cfcd8f5a618822c8e57222a3c10768d2efb8c0250a71a19ba0c76ff55
 # The Proxmox archive key is an upstream artifact (not our secret-derived repo
 # key): its pin stays committed, refreshed with the release that fetches it.
@@ -41,14 +43,16 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Default shell: fail build on error. Honored with `--format docker` in CI.
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
-# Proxmox setup
+# Proxmox setup — the vanilla image trusts ONE fork-free APT repo: its own
+# (fix repacks, this repository's gh-pages) plus the upstream Proxmox
+# no-subscription index. No DaemonCores-VE source, no fork keyring.
 COPY ./src/pvepreinstall /
 RUN chmod +x /usr/sbin/policy-rc.d \
     && url="${BOOTC_APT_URL%/}" \
     && wget \
-        -O /usr/share/keyrings/daemoncores-ve-keyring.gpg \
+        -O /usr/share/keyrings/proxmox-ve-bootc-keyring.gpg \
         "${url}/gpg.key" \
-    && printf '%s  /usr/share/keyrings/daemoncores-ve-keyring.gpg\n' "${BOOTC_GPG_SHA256}" \
+    && printf '%s  /usr/share/keyrings/proxmox-ve-bootc-keyring.gpg\n' "${BOOTC_GPG_SHA256}" \
         | sha256sum -c - \
     && wget \
         https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg \
@@ -71,16 +75,9 @@ RUN chmod +x /usr/sbin/policy-rc.d \
         open-iscsi \
         chrony \
         ksmtuned \
-        dc-zramctl \
         dnsmasq \
-        fanctl \
-        powerctl \
-        dc-firewall-seed \
-        dc-config-zfs \
         proxmox-firewall \
-        pvect-ostree \
-        compose2bootc \
-        dc-gpu-lxc \
+        ifupdown2 \
     && apt remove -y \
         linux-image-amd64 \
         os-prober \
@@ -93,17 +90,18 @@ RUN chmod +x /usr/sbin/policy-rc.d \
     && find /usr/lib/modules -mindepth 1 -maxdepth 1 ! -name "${KVER}" -exec rm -rf {} +
 
 # Post install patch
-# COPY ships /etc/hostname (a baked default so pmxcfs can create the node dir
-# and pve-ssl.pem on the very first boot, before the first-boot wizard renames
-# the host), a matching bootstrap /etc/hosts entry, and the Proxmox drop-in
-# configs. The WAN interface + default bridges are (re)generated on boot by
-# ifupdown2-autoconf; /etc/hosts is refined to the real IP by domain-set.
+# COPY ships the Debian-standard PVE host config: /etc/hostname, a matching
+# bootstrap /etc/hosts entry (+ their .tpl variants), the motd rebrand and the
+# Proxmox drop-in configs (shipped in src/pvepreinstall, before the deb
+# install, at the PVE/Debian-standard position — the audit verdict is
+# MUST-SHIP vanilla). The ddns bridge layout and the first-boot autoconf
+# (ifupdown2-autoconf, domain-set) live in the DaemonCores-VE fork image; on
+# the vanilla image the network interfaces file is written at install time by
+# the bootc-installer network stage.
 COPY ./src/pvepostinstall /
-# NOTE: the WAN-interface autoconf and /etc/hosts FQDN pinning that used to live
-# in the standalone proxmox-firstboot.service / pve-domain-set.service now run as
-# networking.service drop-ins shipped by the ifupdown2 repack
-# (ExecStartPre=/usr/sbin/ifupdown2-autoconf, ExecStartPost=/usr/sbin/domain-set),
-# so no target.wants symlinks are needed for them here.
+# NOTE: no target.wants symlinks are needed for the first-boot host naming:
+# the first-boot wizard renames the host, and /etc/hosts refinement to the
+# real address follows the standard PVE flow.
 RUN mkdir -p /etc/systemd/system/multi-user.target.wants \
     # Guard: abort if pve-manager is missing (proxmox-ve install failed earlier).
     && dpkg -s pve-manager >/dev/null 2>&1 \

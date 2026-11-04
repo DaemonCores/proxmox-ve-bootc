@@ -1,6 +1,0 @@
-Types: deb
-URIs: https://daemoncores.github.io/DaemonCores-VE/
-Suites: trixie
-Components: main
-Enabled: yes
-Signed-By: /usr/share/keyrings/daemoncores-ve-keyring.gpg

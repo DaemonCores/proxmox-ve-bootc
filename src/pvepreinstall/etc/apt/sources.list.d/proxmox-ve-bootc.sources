@@ -1,0 +1,10 @@
+# The APT repository carrying THIS repository's repacked packages
+# (the fix overlays: pve-manager, qemu-server, libtemplate-perl,
+# proxmox-kernel-helper, chrony, openipmi, libpve-storage-perl) — the
+# vanilla layer only. The DaemonCores-VE fork adds its own daemoncores-ve
+# sources file in its own image; the two repos never install deb sets
+# outside their own stage.
+Types: deb
+URIs: https://daemoncores.github.io/proxmox-ve-bootc
+Suites: ./
+Signed-By: /usr/share/keyrings/proxmox-ve-bootc-keyring.gpg

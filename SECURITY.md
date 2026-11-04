@@ -27,10 +27,10 @@ Security fixes target the current default branch and the newest artifacts produc
 
 ## Important security boundaries
 
-- DaemonCores-VE inherits the boot chain, installer, APT trust, and image-signing boundaries from `debian-bootc`.
+- DaemonCores-VE and `proxmox-ve-bootc` inherit the boot chain, installer, APT trust, and image-signing boundaries from `debian-bootc`.
 - Project packages run with host privileges and can modify networking, firewall, storage, swap, cooling, power, or Proxmox state.
-- `dc-config-zfs`, `pvect-ostree`, and installer paths handle persistent storage and require special review.
-- `fanctl` and `powerctl` must fail safely on unsupported or implausible hardware inputs.
+- The installer paths handle persistent storage and require special review.
+- The DaemonCores-VE fork (not this repository) adds `pvect-ostree`, `dc-config-zfs`, `fanctl` and `powerctl` on top of this image; their boundaries are handled there.
 - The repacked `pve-manager` changes subscription-status behaviour; it does not grant a subscription or vendor support.
 - Privileged CI jobs must not execute untrusted contribution code with release credentials.
 

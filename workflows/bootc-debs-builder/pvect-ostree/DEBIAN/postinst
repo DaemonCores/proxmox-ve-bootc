@@ -1,9 +1,0 @@
-#!/bin/bash
-set -e
-
-case "$1" in
-  configure | triggered)
-    mkdir -p /var/lib/pvect-ostree/cts
-    deb-systemd-helper enable pvect-ostree.service
-    ;;
-esac
