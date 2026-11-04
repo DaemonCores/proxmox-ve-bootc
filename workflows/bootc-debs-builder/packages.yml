@@ -303,6 +303,32 @@ packages:
       kernel_apply_patches "${PATCHES_FILE}" \
         "${DEB_ARCH}" "${REAL_KVER}" "${SRCDIR}"
 
+      # Rolling seed (2026-11-04: the -28 PVE packaging ships NO base
+      # .config -> fragments merged alone produced a THIN kernel — CONFIG_PCI
+      # went unset, the NVIDIA pair refuses to compile on it). The seed = the
+      # PVE repo's OWN signed kernel of the SAME resolved version (its
+      # /boot config), downloaded at build: honest rolling, zero pin.
+      if [[ ! -s "${SRCDIR}/.config" ]]; then
+        SEED_PKG=$(apt-cache search --names-only '^proxmox-kernel-[0-9]' \
+          | awk '{print $1}' | grep -- '-signed$' | sort -V | tail -1)
+        test -n "${SEED_PKG}" \
+          || { echo "ERROR: no signed PVE kernel package to seed the config from" >&2; exit 1; }
+        apt-get download "${SEED_PKG}" >/dev/null \
+          || { echo "ERROR: cannot download ${SEED_PKG}" >&2; exit 1; }
+        SEED_DEB="${SEED_PKG}_"*.deb
+        unset SEED_DEB  # glob below, not a var
+        SEED_D=$(find . -maxdepth 1 -name "${SEED_PKG}_*.deb" | head -1)
+        test -n "${SEED_D}" \
+          || { echo "ERROR: downloaded signed kernel deb not found" >&2; exit 1; }
+        rm -rf /tmp/seed && mkdir -p /tmp/seed
+        dpkg-deb -x "${SEED_D}" /tmp/seed
+        SEED_CFG=$(find /tmp/seed -path "*boot/config-*" | head -1)
+        test -s "${SEED_CFG}" \
+          || { echo "ERROR: the signed kernel deb carries no /boot config" >&2; exit 1; }
+        cp "${SEED_CFG}" "${SRCDIR}/.config"
+        echo "kernel-pve: seed config taken from ${SEED_D} (${SEED_CFG##*/}) "
+      fi
+
       [[ -z "${PVE_SEED_CONFIG}" ]] || cp "${PVE_SEED_CONFIG}" "${SRCDIR}/.config"
 
       # Shared kconfig fragments + GPU sets (single source: the engine export,
