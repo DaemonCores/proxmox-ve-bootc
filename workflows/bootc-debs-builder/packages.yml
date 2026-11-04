@@ -270,6 +270,7 @@ packages:
       test -n "${KERNEL_VERSION}" \
         || { echo "ERROR: cannot resolve the PVE kernel version from the repo (rolling anchor)" >&2; exit 1; }
       echo "kernel-pve: rolling PVE kernel package version resolved from the repo: ${KERNEL_VERSION}"
+      fi
 
       apt-get install -y --no-install-recommends \
         build-essential dpkg-dev devscripts curl git yq patch \
