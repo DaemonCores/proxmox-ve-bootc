@@ -203,22 +203,22 @@ packages:
       HELPERS_VER: 7
       # Bump when the build contract changes in a way `sources:` alone
       # cannot express (e.g. the lib's behaviour for the same tree).
+      # 7: the headers+symvers publish became the contract (see the env
+      # comment block above; owner OOB scattering rule).
       # 5: THP arbitration revoked lane-side (owner 2026-11-03 13:05): the
       # shared fragment's ALWAYS pin now wins on this lane too (full-LXC
       # prime), the THP=never profile moves to the image-lane twins
       # (karg + tmpfiles, Containerfile.thpnever-*); x64v4 + the arm64
       # flavour variants are declared.
-      # 6: the build block also produces the linux-modules-nvidia-pve pair
-      # (+ the gpu-*-nvidia-pve wrappers) from the same tree (owner 04/11).
-      KERNEL_BUILD_VER: 6
+      # 6: loadable-module support is pinned in the lane kconfig — the
+      # linux-headers deb of the flavour ships beside the image deb.
+      # 7: the NVIDIA pairing build REVERTED to debian-bootc (owner 04/11
+      # OOB, scattering rule: ONE module builder, ONE symvers producer):
+      # this lane now only publishes the headers tree + full Module.symvers
+      # the single builder compiles the pairs against.
+      KERNEL_BUILD_VER: 7
       KERNEL_ARCH: x86_64
       KERNEL_OUT: /debs
-      # NVIDIA open-gpu-kernel-modules PIN (owner 04/11): the release the
-      # host user-space carries (595.104.02 — the signed CUDA repo tops at
-      # 580.95.05 and 615 ships no user-space), tag AND commit pinned; a
-      # cloned HEAD that does not match the pin is a refusal, never a build.
-      NVIDIA_OPEN_TAG: "595.104.02"
-      NVIDIA_OPEN_SHA256: "ac24e02fc090c3e05c1fc03384b317ac2cc301b5"
     build: |
       # Shared data (owner arbitration 2026-11-03 12:55): the patch set AND
       # the kconfig fragments (incl. the GPU sets) come from the ENGINE
@@ -373,125 +373,32 @@ packages:
 
       # make deb-pkg/bindeb-pkg writes the debs one directory above the tree.
       cp "$(dirname "${SRCDIR}")"/*.deb /debs/
-
-      # ===========================================================================
-      # linux-modules-nvidia-pve pair + the gpu-*-nvidia-pve wrappers (owner
-      # 04/11): built NOW, inside the kernel-pve build block — the tree keeps
-      # its exact -g<commit> release string, so the module lands under the
-      # /lib/modules/<krel> the deb actually installs (a sibling job
-      # re-cloning the PVE packaging could drift that suffix). The NVIDIA
-      # source is release-pinned in the env (tag + commit); the host
-      # user-space is the same release. amd64 lane only — arm64 has no
-      # shipped NVIDIA compute target.
-      # ===========================================================================
-      if [[ "${KERNEL_ARCH}" == "x86_64" ]]; then
-        DEB_ARCH=amd64
-        IMG_DEB=$(find "$(dirname "${SRCDIR}")" -maxdepth 1 \
-          -name "linux-image-*${KERNEL_ARCH_LEVEL}*.deb" ! -name '*-dbg*' \
-          | head -1)
-        [[ -n "${IMG_DEB}" ]] \
-          || { echo "ERROR: no flavour image deb of ${KERNEL_ARCH_LEVEL} to pair" >&2; exit 1; }
-        PVE_KERNEL_PKG=$(dpkg-deb -f "${IMG_DEB}" Package)
-        PVE_KERNEL_VER=$(dpkg-deb -f "${IMG_DEB}" Version)
-        KREL=$(make -C "${SRCDIR}" -s kernelrelease)
-
-        rm -rf /build/nvidia-open
-        git clone --quiet --depth=1 --branch "${NVIDIA_OPEN_TAG}" \
-          https://github.com/NVIDIA/open-gpu-kernel-modules.git /build/nvidia-open
-        NV_SRC_SHA=$(git -C /build/nvidia-open rev-parse HEAD)
-        [[ "${NV_SRC_SHA}" == "${NVIDIA_OPEN_SHA256}" ]] \
-          || { echo "ERROR: nvidia-open ${NVIDIA_OPEN_TAG} resolved ${NV_SRC_SHA}, expected ${NVIDIA_OPEN_SHA256} — refusing" >&2; exit 1; }
-        test -d /build/nvidia-open/kernel-open \
-          || { echo "ERROR: nvidia-open has no kernel-open tree" >&2; exit 1; }
-
-        make -C /build/nvidia-open \
-          SYSSRC="${SRCDIR}" SYSOUT="${SRCDIR}" -j"$(nproc)" modules
-
-        NV_PKG="linux-modules-nvidia-pve-${KERNEL_ARCH_LEVEL}"
-        NV_DESTDIR="/output/${NV_PKG}"
-        rm -rf "${NV_DESTDIR}"
-        mkdir -p "${NV_DESTDIR}/DEBIAN" "${NV_DESTDIR}/lib/modules"
-        [ -f modules.builtin ] || touch modules.builtin
-        [ -f modules.builtin.modinfo ] || touch modules.builtin.modinfo
-        make -C /build/nvidia-open \
-          SYSSRC="${SRCDIR}" SYSOUT="${SRCDIR}" \
-          INSTALL_MOD_PATH="${NV_DESTDIR}" INSTALL_MOD_STRIP=1 modules_install
-
-        # Keep ONLY the nvidia modules: strip every file the kernel image deb
-        # also owns AND the modules_install metadata it regenerates
-        # (identical for every module package — the device-entry pattern).
-        dpkg-deb --fsys-tarfile "${IMG_DEB}" | tar t | sed 's|^\./||' \
-          | while IFS= read -r f; do
-              target="${NV_DESTDIR}/${f}"
-              if [ -f "${target}" ] || [ -L "${target}" ]; then
-                rm -f "${target}"
-              fi
-            done
-        for f in modules.builtin modules.builtin.modinfo modules.alias \
-                 modules.alias.bin modules.dep modules.dep.bin \
-                 modules.softdep modules.symbols modules.symbols.bin \
-                 modules.devname build source; do
-          rm -rf "${NV_DESTDIR}/lib/modules/${KREL}/${f}"
-        done
-
-        test -n "$(find "${NV_DESTDIR}/lib/modules/${KREL}" -name 'nvidia*.ko' 2>/dev/null)" \
-          || { echo "ERROR: modules_install produced no nvidia*.ko" >&2; exit 1; }
-
-        NV_VER="${NVIDIA_OPEN_TAG}+${PVE_KERNEL_VER}"
-        cp "${GITHUB_WORKSPACE:-$(pwd)}/workflows/bootc-debs-builder/nvidia/DEBIAN/control" \
-          "${NV_DESTDIR}/DEBIAN/control"
-        sed -i \
-          -e "s|^Package: linux-modules-nvidia-pve-{{ FLAVOUR }}$|Package: ${NV_PKG}|" \
-          -e "s|Version: {{ VER }}|Version: ${NV_VER}|g" \
-          -e "s|{{ DEPS }}|${PVE_KERNEL_PKG} (= ${PVE_KERNEL_VER})|g" \
-          -e "s|{{ FLAVOUR }}|${KERNEL_ARCH_LEVEL}|g" \
-          -e "s|{{ ARCH }}|${DEB_ARCH}|g" \
-          "${NV_DESTDIR}/DEBIAN/control"
-
-        ( cd "${NV_DESTDIR}" && \
-          find lib -type f | xargs md5sum | sed 's|lib/|/lib/|' \
-          > DEBIAN/md5sums )
-        dpkg-deb --build "${NV_DESTDIR}" \
-          "/debs/${NV_PKG}_${NV_VER}_${DEB_ARCH}.deb"
-        test -s "/debs/${NV_PKG}_${NV_VER}_${DEB_ARCH}.deb" \
-          || { echo "ERROR: output ${NV_PKG} deb empty" >&2; exit 1; }
-
-        # The loader-policy wrappers pair the pair (owner 04/11): conf only,
-        # Depends pinning the exact pair version; they conflict over the
-        # modprobe policy file they ship (one policy per profile).
-        for ws in ia gaming; do
-          WRAP_PKG="gpu-${ws}-nvidia-pve-${KERNEL_ARCH_LEVEL}"
-          WRAP_DESTDIR="/output/${WRAP_PKG}"
-          rm -rf "${WRAP_DESTDIR}"
-          mkdir -p "${WRAP_DESTDIR}/DEBIAN" "${WRAP_DESTDIR}/etc/modprobe.d"
-          cp "${GITHUB_WORKSPACE:-$(pwd)}/workflows/bootc-debs-builder/kernel-pve/modprobe/dc-gpu-${ws}-nvidia.conf" \
-            "${WRAP_DESTDIR}/etc/modprobe.d/dc-gpu-${ws}-nvidia.conf"
-          WRAP_VER="${NV_VER}"
-          cp "${GITHUB_WORKSPACE:-$(pwd)}/workflows/bootc-debs-builder/kernel-pve/gpu-pve/DEBIAN/control" \
-            "${WRAP_DESTDIR}/DEBIAN/control"
-          conflicts="gpu-ia-nvidia-pve-${KERNEL_ARCH_LEVEL}, gpu-gaming-nvidia-pve-${KERNEL_ARCH_LEVEL}, gpu-ia-nvidia, gpu-gaming-nvidia"
-          sed -i \
-            -e "s|^Package: gpu-{{ SET }}-nvidia-pve-{{ FLAVOUR }}$|Package: ${WRAP_PKG}|" \
-            -e "s|Version: {{ VER }}|Version: ${WRAP_VER}|g" \
-            -e "s|{{ DEPS }}|${NV_PKG} (= ${NV_VER})|g" \
-            -e "s|{{ CONFLICTS }}|${conflicts}|g" \
-            -e "s|{{ FLAVOUR }}|${KERNEL_ARCH_LEVEL}|g" \
-            -e "s|{{ SET }}|${ws}|g" \
-            -e "s|{{ ARCH }}|${DEB_ARCH}|g" \
-            "${WRAP_DESTDIR}/DEBIAN/control"
-          ( cd "${WRAP_DESTDIR}" && \
-            md5sum etc/modprobe.d/dc-gpu-${ws}-nvidia.conf | sed 's|etc/|/etc/|' \
-            > DEBIAN/md5sums )
-          dpkg-deb --build "${WRAP_DESTDIR}" \
-            "/debs/${WRAP_PKG}_${WRAP_VER}_${DEB_ARCH}.deb"
-          test -s "/debs/${WRAP_PKG}_${WRAP_VER}_${DEB_ARCH}.deb" \
-            || { echo "ERROR: output ${WRAP_PKG} deb empty" >&2; exit 1; }
-        done
-
-        rm -rf /build /build/nvidia-open
-      else
-        echo "kernel-pve: arm64 lane — no NVIDIA pair (no shipped arm64 compute target)"
-      fi
+      # PUBLISH the headers tree of the flavour for the module builders
+      # (owner 2026-11-04 OOB: the vanilla lane builds NO NVIDIA modules —
+      # it must ship the linux-headers deb of the kernel-pve plus the FULL
+      # Module.symvers, the exact ABI contract the single module builder
+      # (debian-bootc) compiles the pairs against, downloaded from the
+      # published Pages artifact at ITS build). bindeb-pkg emits the
+      # linux-headers deb whenever loadable-module support is in the merged
+      # config; the symvers file is INJECTED into that deb under
+      # /usr/lib/linux-kernel-build/ (the same layout the kernel deb carries
+      # on the debian lane), so the builder fetches ONE artifact per tree.
+      HDR_DEB=$(find "$(dirname "${SRCDIR}")" -maxdepth 1 \
+        -name "linux-headers-*${KERNEL_ARCH_LEVEL}*.deb" ! -name '*-all*' | head -1)
+      test -n "${HDR_DEB}" \
+        || { echo "ERROR: no linux-headers deb of ${KERNEL_ARCH_LEVEL} published" >&2; exit 1; }
+      SYMVERS="${SRCDIR}/Module.symvers"
+      test -s "${SYMVERS}" \
+        || { echo "ERROR: the tree carries no Module.symvers for the headers deb" >&2; exit 1; }
+      HDR_STAGE=$(mktemp -d /tmp/hdr-inject.XXXXXX)
+      dpkg-deb -R "${HDR_DEB}" "${HDR_STAGE}/pkg"
+      mkdir -p "${HDR_STAGE}/pkg/usr/lib/linux-kernel-build"
+      cp "${SYMVERS}" "${HDR_STAGE}/pkg/usr/lib/linux-kernel-build/Module.symvers"
+      ( cd "${HDR_STAGE}/pkg" && \
+        find usr/lib/linux-kernel-build -type f | xargs md5sum | sed 's|usr/|/usr/|' \
+        >> DEBIAN/md5sums )
+      dpkg-deb --build "${HDR_STAGE}/pkg" "${HDR_DEB}"
+      rm -rf "${HDR_STAGE}"
 
       # Free the ~10 GB source tree now that the debs are in /debs.
       rm -rf "${SRCDIR}" /build
