@@ -392,9 +392,11 @@ packages:
         # — which does not compile against the 28 tree. Remove the tool from
         # the tree outright (KLP stays off: nothing on a PVE LXC host
         # livepatches).
-        sed -i '/klp-checksum/d' "${SRCDIR}/tools/objtool/Kbuild" \
-          "${SRCDIR}/tools/objtool/Makefile" 2>/dev/null || true
-        rm -f "${SRCDIR}/tools/objtool/klp-checksum.c"
+        for _ref in klp-checksum builtin-klp; do
+          grep -rl "${_ref}" "${SRCDIR}/tools" 2>/dev/null | xargs -r \
+            sed -i "/${_ref}/d"
+          rm -f "${SRCDIR}/tools/objtool/${_ref}.c"
+        done
         KCFLAGS=$(kernel_flavour_kcflags "${KERNEL_ARCH_LEVEL}")
         kernel_build_debs "${SRCDIR}" bindeb-pkg "${KCFLAGS}"
       else
