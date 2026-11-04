@@ -400,6 +400,65 @@ packages:
       dpkg-deb --build "${HDR_STAGE}/pkg" "${HDR_DEB}"
       rm -rf "${HDR_STAGE}"
 
+      # THE NVIDIA PAIR (owner 04/11 OOB: ONE kernel-modules build per repo
+      # that ships a kernel — the LOGIC stays the engine's shared helpers).
+      # The vanilla lane compiles the NVIDIA open modules against ITS OWN
+      # prepared tree (SYSSRC = the live SRCDIR: kbuild, .config and
+      # Module.symvers are all local — no headers-deb download), and
+      # publishes the pair beside the kernel it is bound to. amd64 only.
+      if [ "$(dpkg --print-architecture)" = "amd64" ]; then
+        NVIDIA_OPEN_TAG="595.104.02"
+        rm -rf /build/nvidia-open
+        git clone --quiet --depth=1 --branch "${NVIDIA_OPEN_TAG}" \
+          https://github.com/NVIDIA/open-gpu-kernel-modules.git /build/nvidia-open
+        test -d /build/nvidia-open/kernel-open \
+          || { echo "ERROR: nvidia-open has no kernel-open tree" >&2; exit 1; }
+
+        GPU_NVIDIA_YML="${CI_KERNEL_SHARED}/patches-gpu/nvidia.yml"
+        [[ -f "${GPU_NVIDIA_YML}" ]] \
+          || { echo "ERROR: engine patches-gpu/nvidia.yml missing" >&2; exit 1; }
+        [[ -n "${KERNEL_ARCH_LEVEL:-}" ]] \
+          || { echo "ERROR: KERNEL_ARCH_LEVEL missing (flavour = the pair suffix)" >&2; exit 1; }
+        # The kernel release string as packaged: real version + LOCALVERSION
+        # (the flavour suffix the image deb name and /lib/modules use).
+        IMG_DEB=$(find /debs -maxdepth 1 -name "linux-image-*${KERNEL_ARCH_LEVEL}*.deb" ! -name "*dbg*" | head -1)
+        test -n "${IMG_DEB}" \
+          || { echo "ERROR: no linux-image deb of ${KERNEL_ARCH_LEVEL} built" >&2; exit 1; }
+        KVER=$(dpkg-deb -f "${IMG_DEB}" Package | sed 's/^linux-image-//')
+        PATCHES_SERIES="${KVER%%-*}"
+        export PATCHES_SERIES
+        kernel_apply_patches "${GPU_NVIDIA_YML}" "amd64" "${NVIDIA_OPEN_TAG}" "/build/nvidia-open"
+        unset PATCHES_SERIES
+
+        # The NVIDIA wrapper Makefile expects its OWN arch scheme (x86_64).
+        make ARCH="x86_64" -C /build/nvidia-open \
+          SYSSRC="${SRCDIR}" SYSOUT="${SRCDIR}" -j"$(nproc)" modules
+
+        NV_PKG="linux-modules-nvidia-pve-${KERNEL_ARCH_LEVEL}"
+        DESTDIR="/output/${NV_PKG}"
+        rm -rf "${DESTDIR}"
+        mkdir -p "${DESTDIR}/DEBIAN" "${DESTDIR}/lib/modules/${KVER}"
+        make -C /build/nvidia-open \
+          SYSSRC="${SRCDIR}" SYSOUT="${SRCDIR}" \
+          INSTALL_MOD_PATH="${DESTDIR}" INSTALL_MOD_STRIP=1 modules_install
+        rm -f "${DESTDIR}/lib/modules/${KVER}/build" \
+          "${DESTDIR}/lib/modules/${KVER}/source"
+        test -n "$(find "${DESTDIR}/lib/modules/${KVER}" -name "nvidia*.ko" | head -1)" \
+          || { echo "ERROR: modules_install produced no nvidia*.ko" >&2; exit 1; }
+
+        # Drop the module metadata the kernel deb already owns (collision).
+        find "${DESTDIR}/lib/modules/${KVER}" -maxdepth 1 \
+          -name "modules.*" -delete
+
+        VERSION="595.104.02-1"
+        printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: DaemonCores <packaging@daemoncores.org>\nDepends: linux-image-%s\nDescription: PVE NVIDIA open kernel modules pair (flavour %s)\n The NVIDIA open-gpu-kernel-modules 595.104.02 compiled against the kernel-pve %s tree of this repo (the ABI pair); loader policy and GSP knobs live in the gpu-set debs.\n' \
+          "${NV_PKG}" "${VERSION}" "$(dpkg --print-architecture)" "${KVER}" "${KERNEL_ARCH_LEVEL}" "${KVER}" \
+          > "${DESTDIR}/DEBIAN/control"
+        ( cd "${DESTDIR}" && find . -type f | sed 's|^\./||' >> DEBIAN/md5sums )
+        dpkg-deb --build "${DESTDIR}" "/debs/${NV_PKG}_${VERSION}_amd64.deb"
+        ls -la "/debs/${NV_PKG}_${VERSION}_amd64.deb"
+      fi
+
       # Free the ~10 GB source tree now that the debs are in /debs.
       rm -rf "${SRCDIR}" /build
       ls -la /debs
