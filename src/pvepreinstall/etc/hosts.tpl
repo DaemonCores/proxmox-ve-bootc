@@ -9,11 +9,4 @@ ff02::2 ip6-allrouters
 ff02::3 ip6-allhosts
 
 # PVE
-# Bootstrap entry so the baked default hostname resolves to a non-loopback-only
-# address BEFORE the first-boot flow runs. pmxcfs needs the local hostname to
-# resolve to create /etc/pve/nodes/<host> and generate pve-ssl.pem, and it
-# starts during multi-user boot — earlier than the first-boot flow
-# The first-boot flow rewrites this
-# line to the real global IPv4 once the WAN interface has a lease; the first-boot
-# wizard renames the host and the node is renamed on the next boot.
-127.0.1.1   pve-bootc.local pve-bootc
+{{ IP }}   {{ HOST }}.{{ FQDN }} {{ HOST }}
