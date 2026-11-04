@@ -394,8 +394,8 @@ packages:
         # livepatches).
         for _ref in klp-checksum builtin-klp; do
           grep -rl "${_ref}" "${SRCDIR}/tools" 2>/dev/null | xargs -r \
-            sed -i "/${_ref}/d"
-          rm -f "${SRCDIR}/tools/objtool/${_ref}.c"
+            sed -i "/${_ref}/d" || true
+          rm -f "${SRCDIR}/tools/objtool/${_ref}.c" 2>/dev/null || true
         done
         KCFLAGS=$(kernel_flavour_kcflags "${KERNEL_ARCH_LEVEL}")
         kernel_build_debs "${SRCDIR}" bindeb-pkg "${KCFLAGS}"
