@@ -263,14 +263,13 @@ packages:
       # searches (observed: the -signed twin of the same version came back);
       # the authoritative selection RE-GREENS with ERE anchored on the exact
       # name, which excludes the -signed and -signed-template variants.
-      KERNEL_VERSION=$(apt-cache search --names-only '^proxmox-kernel-[0-9]' \
+      KERNEL_VERSION="${KERNEL_VERSION:-$(apt-cache search --names-only '^proxmox-kernel-[0-9]' \
         | awk '{print $1}' \
         | grep -E '^proxmox-kernel-[0-9][0-9.]*-[0-9]+-pve$' \
-        | sed 's/^proxmox-kernel-//' | sort -V | tail -1)
+        | sed 's/^proxmox-kernel-//' | sort -V | tail -1)}" 
       test -n "${KERNEL_VERSION}" \
         || { echo "ERROR: cannot resolve the PVE kernel version from the repo (rolling anchor)" >&2; exit 1; }
-      echo "kernel-pve: rolling PVE kernel package version resolved from the repo: ${KERNEL_VERSION}"
-      fi
+      echo "kernel-pve: PVE kernel package version in build: ${KERNEL_VERSION}"
 
       apt-get install -y --no-install-recommends \
         build-essential dpkg-dev devscripts curl git yq patch \
