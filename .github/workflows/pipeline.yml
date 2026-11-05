@@ -42,6 +42,10 @@ on:
         description: 'Build ISO'
         type: boolean
         default: true
+      only_deb:
+        description: 'Build a SINGLE deb entry only (expanded name or entry prefix, e.g. zfs-module-pve-x64v3 / zfs-module-pve). Empty = the whole plan.'
+        type: string
+        default: ''
       run_image:
         description: 'Build container image'
         type: boolean
@@ -69,4 +73,5 @@ jobs:
       run_debs: ${{ inputs.run_debs }}
       run_image: ${{ inputs.run_image }}
       run_iso: ${{ inputs.run_iso }}
+      only_deb: ${{ inputs.only_deb }}
     secrets: inherit
