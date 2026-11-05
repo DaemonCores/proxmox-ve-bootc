@@ -547,6 +547,7 @@ packages:
         DESC="${DESC}"'Description: PVE NVIDIA open kernel modules pair (flavour %s)\n The NVIDIA open-gpu-kernel-modules 595.104.02'
         DESC="${DESC}"' compiled against the kernel-pve %s tree of this repo (the ABI pair);'
         DESC="${DESC}"' loader policy and GSP knobs live in the gpu-set debs.\n'
+        DESC="${DESC}"'Section: kernel\nPriority: optional\n'
         printf "${DESC}" \
           "${NV_PKG}" "${VERSION}" "$(dpkg --print-architecture)" "${KVER}" "${KERNEL_ARCH_LEVEL}" "${KVER}" \
           > "${DESTDIR}/DEBIAN/control"
