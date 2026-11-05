@@ -192,8 +192,9 @@ packages:
   # never switched on a bootc system (immutability). Waves: no deps —
   # wave 0.
   #
-  # Version resolution: the KERNEL RELEASE is the pinned KERNEL_VER (see
-  # the env block); KERNEL_VERSION resolved from the Proxmox repo
+  # Version resolution: the KERNEL RELEASE is RESOLVED AT BUILD (see the
+  # track block below — the standard mechanism, no fixed version env,
+  # owner order 2026-11-05 01:5x); KERNEL_VERSION resolved from the Proxmox repo
   # (ROLLING anchor, owner arbitration 2026-11-03 12:55, newest
   # proxmox-kernel-<ver>-pve of the repo, NO pin) now only names the
   # packaging identity for the CONFIG SEED selection and the log — the
@@ -241,13 +242,24 @@ packages:
       KERNEL_BUILD_VER: 8
       KERNEL_ARCH: x86_64
       KERNEL_OUT: /debs
-      # MAINLINE SOURCE PIN (pivot 7.2, owner 2026-11-05): the kernel.org
-      # tarball the lane builds — the SAME release the debian lane pins
-      # (its temporary pin, same rationale: the engine probe checks patch
-      # PRESENCE, not applicability). Restore a rolling `track:` resolution
-      # on BOTH lanes together, never on one alone.
-      KERNEL_VER: "7.2.15"
-      KERNEL_SHA256: "d0f6b1d7324c937ccaeb5c4ca7084bfcf71db2edb3e2d3a31f0ad83a681809ab"
+    # DYNAMIC UPSTREAM RESOLUTION (owner order 2026-11-05 01:5x: NO fixed
+    # kernel version anywhere): the SAME mechanism as the debian lane — the
+    # standard track resolution (upstream-track/track.sh): the newest
+    # stable kernel.org release of the CURRENT patch-proven stream, the
+    # tarball sha256 read from sha256sums.asc at build time (no literal
+    # version, no frozen digest in this manifest). The `series:` value is a
+    # STREAM anchor, not a version: the newest 7.2.x is built while it
+    # streams, and resolution auto-advances when the series moves. The PVE
+    # additive dry-run re-validates the RESOLVED tree at build (fuzz 0,
+    # all-or-nothing) — a series the patch data does not cover fails the
+    # build and keeps the last-good deb (proven live: the set's first
+    # conflict on the newer stream, 0055-KVM... on 7.3.1).
+    track:
+      KERNEL_VER:
+        kernel-org: stable
+        series: "7.2"
+        digests:
+          KERNEL_SHA256: "linux-{version}.tar.xz"
     build: |
       # Shared data (owner arbitration 2026-11-03 12:55): the patch set AND
       # the kconfig fragments (incl. the GPU sets) come from the ENGINE
@@ -320,9 +332,10 @@ packages:
       # for arch/amd64/Makefile otherwise (first pivot run, live).
       export ARCH="${KERNEL_ARCH}"
 
-      # Identity guard (the tarball pin and the ACTUAL tree must agree —
-      # the night cost of a wrong-path resolution made this a hard check):
-      # the tree Makefile is the truth the patch manifests resolve against.
+      # Identity guard (the RESOLVED upstream and the ACTUAL tree must
+      # agree — the night cost of a wrong-path resolution made this a hard
+      # check): the tree Makefile is the truth the patch manifests resolve
+      # against.
       TREE_KVER=$(awk '/^VERSION *=/{v=$3} /^PATCHLEVEL *=/{p=$3} \
         /^SUBLEVEL *=/{s=$3} END{print v"."p"."s}' "${SRCDIR}/Makefile")
       [[ "${TREE_KVER}" == "${KERNEL_VER}" ]] \
