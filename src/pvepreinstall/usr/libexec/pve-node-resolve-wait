@@ -1,0 +1,34 @@
+#!/bin/bash
+# pve-node-resolve-wait - ExecStartPre for pve-cluster.service.
+#
+# pmxcfs refuses to start until the node name resolves to a NON-loopback
+# address. On a vanilla boot the rendered /etc/hosts entry (domain-set, as
+# ExecStartPost of networking) lands only once the WAN lease is bound, so a
+# plain After=network-online ordering does NOT guarantee the entry exists
+# when pmxcfs forks. This helper polls the local resolver until the node
+# name carries at least one non-loopback address, then lets rc.pvclare
+# start. Fail loud after the cap: a host that never resolves its own node
+# name is a broken PVE install, not a recoverable state.
+set -euo pipefail
+
+HOST=$(hostname -s)
+# 90 s > ifupdown2's own 30 s start timeout: whichever path binds the lease
+# (dhclient background, domain-set ExecStartPost) finishes first; nothing
+# renders /etc/hosts later than this in a sane boot.
+CAP=90
+
+i=0
+while [ "$i" -lt "$CAP" ]; do
+    # getent lists every address the resolver knows; we only need ONE
+    # non-loopback entry for pmxcfs to accept the node name.
+    if getent ahostsv4 "$HOST" 2>/dev/null \
+        | awk '{print $1}' \
+        | grep -qv '^127\.'; then
+        exit 0
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+
+echo "ERROR: node name '${HOST}' did not resolve to a non-loopback address within ${CAP}s (missing /etc/hosts entry or no WAN lease)" >&2
+exit 1
