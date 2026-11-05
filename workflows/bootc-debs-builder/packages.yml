@@ -239,7 +239,11 @@ packages:
       # (owner 2026-11-05): the tree is the pinned mainline release, the
       # -pve suffix lands on the release, and the pairs rebuild against the
       # fresh tree (SRCDIR local, unchanged).
-      KERNEL_BUILD_VER: 8
+      # 9: the OpenZFS module pair joins the NVIDIA pair in the same local
+      # build + deb glob (owner order 05/11 08:5x): zfs-module-pve-<flavour>,
+      # OpenZFS tag version-matched to the host zfsutils (2.3.4-pve1 →
+      # zfs-2.3.4), NO DKMS, published in the same wave as the kernel.
+      KERNEL_BUILD_VER: 9
       KERNEL_ARCH: x86_64
       KERNEL_OUT: /debs
     # DYNAMIC UPSTREAM RESOLUTION (owner order 2026-11-05 01:5x: NO fixed
@@ -311,7 +315,8 @@ packages:
         build-essential dpkg-dev devscripts curl git yq patch \
         bc bison flex libncurses-dev libssl-dev libelf-dev rsync kmod python3 \
         fakeroot ca-certificates \
-        debhelper libdw-dev gawk zstd xz-utils lz4
+        debhelper libdw-dev gawk zstd xz-utils lz4 \
+        autoconf automake libtool
       [[ "${KERNEL_ARCH}" = "arm64" ]] && \
         apt-get install -y --no-install-recommends \
           crossbuild-essential-arm64 gcc-aarch64-linux-gnu
@@ -554,14 +559,81 @@ packages:
         ( cd "${DESTDIR}" && find . -type f | sed 's|^\./||' >> DEBIAN/md5sums )
         dpkg-deb --build "${DESTDIR}" "/debs/${NV_PKG}_${VERSION}_amd64.deb"
         ls -la "/debs/${NV_PKG}_${VERSION}_amd64.deb"
+
+        # THE ZFS PAIR (owner order 05/11 08:5x): the pools (HDD-4T,
+        # SSD-600G) are INTACT — the unified mainline 7.2 tree carries no
+        # zfs module (the PVE packaging builds it from the zfsonlinux
+        # submodule, which is OUT of this build path). Same pattern as the
+        # NVIDIA pair above: clone, build against the LOCAL tree
+        # (SYSSRC-equivalent: OpenZFS has no SYSSRC knob — its configure
+        # --with-linux/--with-linux-obj IS the SYSSRC=$SRCDIR contract),
+        # modules into the deb, dpkg-deb. NO DKMS (doctrine). amd64 only,
+        # same gate as NVIDIA. Version-matched rule: the module OpenZFS tag
+        # tracks the host zfsutils-linux USERSPACE. The PVE trixie index
+        # ships 2.3.4-pve1 (upstream zfs-2.3.4 + pve dist patches; ABI
+        # stable inside the 2.3 series), so ZFS_TAG pins zfs-2.3.4 and the
+        # deb's Depends floors zfsutils-linux at the same minor — the host
+        # picks the matching 2.3.4-pve1 utils when it installs the pair.
+        # iartistique is rebooting (ssh down): verify `zfs version` via the
+        # relay when it returns; if the host runs a different 2.x, REPIN
+        # this tag and rebuild (owner rule a), never boot the host onto a
+        # module whose utils floor it cannot satisfy.
+        ZFS_TAG="zfs-2.3.4"
+        ZFS_PKG="zfs-module-pve-${KERNEL_ARCH_LEVEL}"
+        rm -rf /build/openzfs
+        git clone --quiet --depth=1 --branch "${ZFS_TAG}" \
+          https://github.com/openzfs/zfs.git /build/openzfs
+        test -f /build/openzfs/zfs.release.in \
+          || { echo "ERROR: openzfs clone ${ZFS_TAG} is not an OpenZFS tree" >&2; exit 1; }
+        ( cd /build/openzfs && ./autogen.sh ) >/dev/null 2>&1
+        ( cd /build/openzfs && ./configure --with-config=kernel \
+            --with-linux="${SRCDIR}" --with-linux-obj="${SRCDIR}" ) \
+          || { echo "ERROR: openzfs configure against ${SRCDIR} failed" >&2; exit 1; }
+        export ARCH
+        make -C /build/openzfs -j"$(nproc)" modules
+        ZFS_KO_DIR="/build/openzfs-kos"
+        rm -rf "${ZFS_KO_DIR}" && mkdir -p "${ZFS_KO_DIR}"
+        find /build/openzfs -name '*.ko' -type f -exec cp -t "${ZFS_KO_DIR}" {} +
+        for zko in zfs spl zavl znvpair zunicode zcommon zpios; do
+          test -f "${ZFS_KO_DIR}/${zko}.ko" \
+            || { echo "ERROR: openzfs build produced no ${zko}.ko" >&2; exit 1; }
+        done
+
+        ZFSDIR="/output/${ZFS_PKG}"
+        rm -rf "${ZFSDIR}"
+        mkdir -p "${ZFSDIR}/DEBIAN" "${ZFSDIR}/lib/modules/${KVER}/updates"
+        cp "${ZFS_KO_DIR}"/*.ko "${ZFSDIR}/lib/modules/${KVER}/updates/"
+        ZFS_DESC='Package: %s\nVersion: %s\nArchitecture: %s\n'
+        ZFS_DESC="${ZFS_DESC}"'Maintainer: DaemonCores <packaging@daemoncores.org>\n'
+        ZFS_DESC="${ZFS_DESC}"'Depends: linux-image-%s, zfsutils-linux (>= 2.3.4~)\n'
+        ZFS_DESC="${ZFS_DESC}"'Description: PVE OpenZFS kernel modules (flavour %s)\n'
+        ZFS_DESC="${ZFS_DESC}"' The OpenZFS %s modules (zfs/spl/zavl/znvpair/'
+        ZFS_DESC="${ZFS_DESC}"'zunicode/zcommon/zpios)'
+        ZFS_DESC="${ZFS_DESC}"' compiled against the kernel-pve %s tree of this'
+        ZFS_DESC="${ZFS_DESC}"' repo (the ABI pair); the userspace is the matching'
+        ZFS_DESC="${ZFS_DESC}"' zfsutils-linux pve package.\n'
+        ZFS_DESC="${ZFS_DESC}"'Section: kernel\nPriority: optional\n'
+        printf "${ZFS_DESC}" \
+          "${ZFS_PKG}" "2.3.4-1" "$(dpkg --print-architecture)" "${KVER}" \
+          "${KERNEL_ARCH_LEVEL}" "${ZFS_TAG}" "${KVER}" \
+          > "${ZFSDIR}/DEBIAN/control"
+        printf '#!/bin/sh\nset -e\nif command -v depmod >/dev/null 2>&1; then\n  depmod -a %s\nfi\n' "${KVER}" \
+          > "${ZFSDIR}/DEBIAN/postinst"
+        chmod 755 "${ZFSDIR}/DEBIAN/postinst"
+        ( cd "${ZFSDIR}" && find . -type f ! -path './DEBIAN/*' | sed 's|^\./||' >> DEBIAN/md5sums )
+        dpkg-deb --build "${ZFSDIR}" "/debs/${ZFS_PKG}_2.3.4-1_amd64.deb"
+        ls -la "/debs/${ZFS_PKG}_2.3.4-1_amd64.deb"
+        rm -rf "${ZFS_KO_DIR}"
       fi
 
       # Free the ~10 GB source tree now that the debs are in /debs.
       rm -rf "${SRCDIR}" /build
       ls -la /debs
     # deb-glob is NOT {variant}-substituted by expand.jq (only variant-source
-    # and variant-deps are): every variant carries its own literal glob.
-    deb-glob: "linux-*x64v1*"
+    # and variant-deps are): every variant carries its own literal glob — a
+    # SPACE-separated list, word-split by build-deb.sh's ls (the kernel debs
+    # plus, on amd64, this entry's zfs-module-pve pair).
+    deb-glob: "linux-*x64v1* zfs-module-pve-x64v1*"
     variants:
       x64v1:
         when:
@@ -569,15 +641,15 @@ packages:
       x64v2:
         when:
           arch: amd64
-        deb-glob: "linux-*x64v2*"
+        deb-glob: "linux-*x64v2* zfs-module-pve-x64v2*"
       x64v3:
         when:
           arch: amd64
-        deb-glob: "linux-*x64v3*"
+        deb-glob: "linux-*x64v3* zfs-module-pve-x64v3*"
       x64v4:
         when:
           arch: amd64
-        deb-glob: "linux-*x64v4*"
+        deb-glob: "linux-*x64v4* zfs-module-pve-x64v4*"
       armv8.0:
         when:
           arch: arm64
