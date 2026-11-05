@@ -432,9 +432,15 @@ packages:
       fi
       shopt -u nullglob
 
-      # LANE IDENTITY (pivot 7.2, owner point c): -pve lands on the release
-      # for EVERY flavour (arm64 cross includes), before the build branch.
-      export LOCALVERSION="-pve"
+      # ONE-MODULE ABI (owner 05/11 midi, alignment (a)): the -pve suffix
+      # LEAVES the kernel release. The two lanes of the same mainline series
+      # now carry the IDENTICAL release string (7.2.15-<x64vN>-xanmod1) so
+      # ONE module build (the shared kernel_build_module helper) loads on
+      # both. The -pve identity survives in the PACKAGING only (the PVE repo,
+      # the lane's docs and the module-pair deb names). Old -pve kernels of
+      # the same release string keep their own ABI (modversions) and stay
+      # behind: never install the new pair beside them.
+      unset LOCALVERSION
 
       if [[ "${KERNEL_ARCH}" = "x86_64" ]]; then
         # ONE flavour per variant (KERNEL_ARCH_LEVEL). KCFLAGS carries the
@@ -443,15 +449,11 @@ packages:
         kernel_merge_config "${SRCDIR}" "${FRAGS[@]}"
         # KLP guard (doctrine non-modifiable, remains): the objtool
         # klp-checksum tool is not built unless the merged config asks for
-        # it; plus the LANE IDENTITY suffix (pivot 7.2, owner point c): the
-        # env LOCALVERSION appends "-pve" OVER the flavour
-        # (7.2.15-<x64vN>-xanmod1-pve — distinct from the debian lane's
-        # 7.2.15-<x64vN>-xanmod1; the deb names and /lib/modules carry it).
+        # it. LOCALVERSION alignment above: the release is the plain
+        # 7.2.15-<x64vN>-xanmod1 — the debian lane's exact string (proven on
+        # the published pair module's vermagic), no env suffix anywhere.
         grep -q '^CONFIG_KLP_BUILD=y' "${SRCDIR}/.config" \
           || KERNEL_MAKE_ARGS="ARCH_HAS_KLP=n"
-        # The env LOCALVERSION (not only a make variable) so the
-        # setlocalversion subprocess sees it in the environment.
-        export KERNEL_MAKE_ARGS="${KERNEL_MAKE_ARGS:-} LOCALVERSION=-pve"
         KCFLAGS=$(kernel_flavour_kcflags "${KERNEL_ARCH_LEVEL}")
         kernel_build_debs "${SRCDIR}" bindeb-pkg "${KCFLAGS}"
       else
@@ -523,38 +525,31 @@ packages:
         kernel_apply_patches "${GPU_NVIDIA_YML}" "amd64" "${NVIDIA_OPEN_TAG}" "/build/nvidia-open"
         unset PATCHES_SERIES
 
-        # The NVIDIA wrapper Makefile expects its OWN arch scheme (x86_64).
-        make ARCH="x86_64" -C /build/nvidia-open \
-          SYSSRC="${SRCDIR}" SYSOUT="${SRCDIR}" -j"$(nproc)" modules
+        # ONE-module build (owner 05/11 midi points c/d): the build and the
+        # deb assembly move to the shared kernel_helpers — same helper as
+        # the zfs pair, ONE module ABI for both lanes of the release.
+        kernel_module_run_build "${SRCDIR}" /build/nvidia-open \
+          'make ARCH="x86_64" -C /build/nvidia-open -j"$(nproc)" modules'
+        NV_KOS=()
+        shopt -s nullglob
+        for nko in /build/nvidia-open/kernel-open/*.ko /build/nvidia-open/*.ko; do
+          NV_KOS+=("${nko}")
+        done
+        shopt -u nullglob
+        test "${#NV_KOS[@]}" -ge 1 \
+          || { echo "ERROR: nvidia-open produced no nvidia*.ko" >&2; exit 1; }
 
-        NV_PKG="linux-modules-nvidia-pve-${KERNEL_ARCH_LEVEL}"
-        DESTDIR="/output/${NV_PKG}"
-        rm -rf "${DESTDIR}"
-        mkdir -p "${DESTDIR}/DEBIAN" "${DESTDIR}/lib/modules/${KVER}"
-        make -C /build/nvidia-open \
-          SYSSRC="${SRCDIR}" SYSOUT="${SRCDIR}" \
-          INSTALL_MOD_PATH="${DESTDIR}" INSTALL_MOD_STRIP=1 modules_install
-        rm -f "${DESTDIR}/lib/modules/${KVER}/build" \
-          "${DESTDIR}/lib/modules/${KVER}/source"
-        test -n "$(find "${DESTDIR}/lib/modules/${KVER}" -name "nvidia*.ko" | head -1)" \
-          || { echo "ERROR: modules_install produced no nvidia*.ko" >&2; exit 1; }
-
-        # Drop the module metadata the kernel deb already owns (collision).
-        find "${DESTDIR}/lib/modules/${KVER}" -maxdepth 1 \
-          -name "modules.*" -delete
-
-        VERSION="595.104.02-1"
-        DESC='Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: DaemonCores <packaging@daemoncores.org>\nDepends: linux-image-%s\n'
-        DESC="${DESC}"'Description: PVE NVIDIA open kernel modules pair (flavour %s)\n The NVIDIA open-gpu-kernel-modules 595.104.02'
-        DESC="${DESC}"' compiled against the kernel-pve %s tree of this repo (the ABI pair);'
-        DESC="${DESC}"' loader policy and GSP knobs live in the gpu-set debs.\n'
-        DESC="${DESC}"'Section: kernel\nPriority: optional\n'
-        printf "${DESC}" \
-          "${NV_PKG}" "${VERSION}" "$(dpkg --print-architecture)" "${KVER}" "${KERNEL_ARCH_LEVEL}" "${KVER}" \
-          > "${DESTDIR}/DEBIAN/control"
-        ( cd "${DESTDIR}" && find . -type f | sed 's|^\./||' >> DEBIAN/md5sums )
-        dpkg-deb --build "${DESTDIR}" "/debs/${NV_PKG}_${VERSION}_amd64.deb"
-        ls -la "/debs/${NV_PKG}_${VERSION}_amd64.deb"
+        # Depends LOOSENED (owner midi point e): no flavour pin, no version
+        # pin — both lanes' kernel packages of the same aligned release
+        # satisfy it (the deb is consumed by both).
+        kernel_modules_deb \
+          "linux-modules-nvidia-pve-${KERNEL_ARCH_LEVEL}" "595.104.02-1" "${KVER}" \
+          "drivers/video" \
+          "linux-image-${KVER} | daemoncores-kernel-${KVER}" \
+          "PVE NVIDIA open kernel modules pair (flavour ${KERNEL_ARCH_LEVEL})\n The NVIDIA open-gpu-kernel-modules ${NVIDIA_OPEN_TAG}"
+          " compiled against the ${KVER} tree of this repo (the ABI pair);"
+          " loader policy and GSP knobs live in the gpu-set debs." \
+          "${NV_KOS[@]}"
       fi
 
       # Free the ~10 GB source tree now that the debs are in /debs.
@@ -649,28 +644,31 @@ packages:
       # The flavour's published headers deb, resolved from THIS repo's APT
       # index (PAGES_URL — the same base build-deb.sh derives; trixie is
       # the dist bootc-debs-end publishes). No version committed here: the
-      # newest 7.2.x build of the flavour is taken, the kernel entry's
-      # rolling anchor is mirrored, never pinned.
+      # newest build of the flavour wins, and the ALIGNED (plain, no -pve)
+      # release string is preferred — the one-module ABI deb must be built
+      # on the plain tree (owner 05/11 midi); the legacy -pve headers are
+      # only a transition fallback and keep their old modversions ABI.
       BASE="https://daemoncores.github.io/$(printf '%s' "${GITHUB_REPOSITORY:?}" | cut -d/ -f2 | tr '[:upper:]' '[:lower:]')"
       test -z "${PAGES_URL:-}" || BASE="${PAGES_URL%/}"
       IDX="${BASE}/dists/trixie/main/binary-amd64/Packages"
       curl -fsSL "${IDX}" -o /build/Packages \
         || { echo "ERROR: cannot read the APT index ${IDX}" >&2; exit 1; }
-      HDR_PKG=$(awk -v flav="${FLAV}" '
-        /^Package: linux-headers-.*-xanmod1-pve$/ { p=$2 }
-        /^Version: / { if (p != "") { v=substr($0,10) } }
-        p != "" && v != "" { last=v; lp=p; p=""; v="" }
-        END { if (lp != "") { print lp "=" last } }' /build/Packages)
-      echo "zfs-module-pve: headers selected: ${HDR_PKG:-<none>}"
-      test -n "${HDR_PKG}" \
+      # Prefer the ALIGNED (plain, no -pve) headers when both spellings
+      # exist; otherwise fall back to the legacy -pve tree (transition only).
+      HDR_NAME=$(grep '^Package: linux-headers-' /build/Packages \
+        | sed 's/^Package: //' \
+        | grep -- "-${FLAV}-xanmod1\$" | sort -rV | head -1)
+      test -n "${HDR_NAME}" \
+        || HDR_NAME=$(grep '^Package: linux-headers-' /build/Packages \
+          | sed 's/^Package: //' \
+          | grep -- "-${FLAV}-xanmod1-pve\$" | sort -rV | head -1)
+      echo "zfs-module-pve: headers selected: ${HDR_NAME:-<none>}"
+      test -n "${HDR_NAME}" \
         || { echo "ERROR: no linux-headers for flavour ${FLAV} in the APT index" >&2; exit 1; }
-      HDR_NAME="${HDR_PKG%%=*}"
       curl -fsSL "${BASE}/$(sed -n "s/^Filename: //p" /build/Packages \
         | grep -F "${HDR_NAME}_" | head -1)" -o /build/headers.deb \
         || { echo "ERROR: cannot download ${HDR_NAME}" >&2; exit 1; }
       KVER=$(dpkg-deb -f /build/headers.deb Package | sed 's/^linux-headers-//')
-      test "${HDR_NAME}" = "linux-headers-${KVER}" \
-        || { echo "ERROR: index identity mismatch (${HDR_NAME} != linux-headers-${KVER})" >&2; exit 1; }
       echo "zfs-module-pve: building against ${KVER} (${HDR_NAME})"
 
       apt-get update >/dev/null
@@ -686,6 +684,10 @@ packages:
         || { echo "ERROR: ${SYS} is not a module-ready headers tree" >&2; exit 1; }
       grep -qF "\"${KVER}\"" "${SYS}/include/generated/utsrelease.h" \
         || { echo "ERROR: headers tree UTS_RELEASE != ${KVER}" >&2; exit 1; }
+      # ABI guard (owner midi): the pair must NOT carry modversions CRCs —
+      # the aligned tree was merged with CONFIG_MODVERSIONS=n (modules.cfg).
+      grep -q '^CONFIG_MODVERSIONS=y' "${SYS}/.config" \
+        && { echo "ERROR: ${KVER} tree carries MODVERSIONS — one-module ABI broken" >&2; exit 1; }
 
       ZFS_TAG="${ZFS_TAG:-zfs-2.4.4}"
       rm -rf /build/openzfs
@@ -695,54 +697,32 @@ packages:
         || { echo "ERROR: openzfs clone ${ZFS_TAG} is not an OpenZFS tree" >&2; exit 1; }
       ( cd /build/openzfs && ./autogen.sh ) >/dev/null 2>&1
       ( cd /build/openzfs && ./configure --with-config=kernel \
-          --with-linux="${SYS}" --with-linux-obj="${SYS}" ) \
+          --with-linux="$(readlink -e "${SYS}")" \
+          --with-linux-obj="$(readlink -e "${SYS}")" ) \
         || { echo "ERROR: openzfs configure against ${SYS} failed" >&2; exit 1; }
       export ARCH=x86_64
-      # MODULE-ONLY target (owner 08:5x): the default `make` chains
-      # scripts/zfs-tests.sh -c AFTER the modules and fails off the module
-      # (the tests are not the goal — proven on the local make5 run where
-      # zfs.ko/spl.ko + MODPOST were already done). make -C module builds
-      # zfs.ko (the 2.x merged zavl/znvpair/zunicode/zcommon/zpios) +
-      # spl.ko; the build/ .ko are kbuild feature probes, NOT shipped.
-      make -C /build/openzfs/module -j"$(nproc)"
-      test -s /build/openzfs/module/zfs.ko && test -s /build/openzfs/module/spl.ko \
+      # MODULE-ONLY target: the default `make` chains scripts/zfs-tests.sh -c
+      # after the modules and fails off the module (proven make5). 2.x
+      # merges the submodules: EXACTLY zfs.ko (zavl/znvpair/zunicode/
+      # zcommon/zpios merged) + spl.ko; the build/ .ko are kbuild probes.
+      kernel_module_run_build "${SYS}" /build/openzfs/module \
+        'make -C /build/openzfs/module -j"$(nproc)"'
+      test -s /build/openzfs/module/zfs.ko \
+        && test -s /build/openzfs/module/spl.ko \
         || { echo "ERROR: no zfs.ko/spl.ko after the module build" >&2; exit 1; }
-      ZFS_KO_DIR="/build/openzfs-kos"
-      rm -rf "${ZFS_KO_DIR}" && mkdir -p "${ZFS_KO_DIR}"
-      cp /build/openzfs/module/zfs.ko /build/openzfs/module/spl.ko \
-        "${ZFS_KO_DIR}/"
-      strip --strip-debug "${ZFS_KO_DIR}"/*.ko
 
-      ZFS_PKG="zfs-module-pve-${FLAV}"
-      ZFS_DIR="/output/${ZFS_PKG}"
-      rm -rf "${ZFS_DIR}"
-      # Standard post-2.1 layout: kernel/zfs/ carries exactly the 2 .ko.
-      mkdir -p "${ZFS_DIR}/DEBIAN" "${ZFS_DIR}/lib/modules/${KVER}/kernel/zfs"
-      cp "${ZFS_KO_DIR}"/*.ko "${ZFS_DIR}/lib/modules/${KVER}/kernel/zfs/"
       ZFS_VER="${ZFS_DEB_VER:-2.4.4-1}"
-      HDR_VER=$(dpkg-deb -f /build/headers.deb Version)
-      ZFS_DESC='Package: %s\nVersion: %s\nArchitecture: %s\n'
-      ZFS_DESC="${ZFS_DESC}"'Maintainer: DaemonCores <packaging@daemoncores.org>\n'
-      ZFS_DESC="${ZFS_DESC}"'Depends: linux-image-%s (= %s), zfsutils-linux (>= 2.3~)\n'
-      ZFS_DESC="${ZFS_DESC}"'Description: PVE OpenZFS kernel modules (flavour %s)\n'
-      ZFS_DESC="${ZFS_DESC}"' The OpenZFS %s modules built against the published'
-      ZFS_DESC="${ZFS_DESC}"' linux-headers deb of the kernel-pve %s tree (the ABI'
-      ZFS_DESC="${ZFS_DESC}"' pair); the userspace is the host zfsutils-linux'
-      ZFS_DESC="${ZFS_DESC}"' (2.3.x-pve — a newer module over older utils is the'
-      ZFS_DESC="${ZFS_DESC}"' tolerated direction).\n'
-      ZFS_DESC="${ZFS_DESC}"'Section: kernel\nPriority: optional\n'
-      printf "${ZFS_DESC}" \
-        "${ZFS_PKG}" "${ZFS_VER}" "$(dpkg --print-architecture)" \
-        "${KVER}" "${HDR_VER}" "${FLAV}" "${ZFS_TAG}" "${FLAV}" \
-        > "${ZFS_DIR}/DEBIAN/control"
-      printf '#!/bin/sh\nset -e\nif command -v depmod >/dev/null 2>&1; then\n  depmod -a %s\nfi\n' "${KVER}" \
-        > "${ZFS_DIR}/DEBIAN/postinst"
-      chmod 755 "${ZFS_DIR}/DEBIAN/postinst"
-      ( cd "${ZFS_DIR}" \
-        && find . -type f ! -path './DEBIAN/*' | sed 's|^\./||' >> DEBIAN/md5sums )
-      rm -rf /build/sys /build/openzfs "${ZFS_KO_DIR}"
-      dpkg-deb --build "${ZFS_DIR}" "/debs/${ZFS_PKG}_${ZFS_VER}_amd64.deb"
-      ls -la "/debs/${ZFS_PKG}_${ZFS_VER}_amd64.deb"
+      # Depends LOOSENED (owner midi point e): the release string carries the
+      # flavour; the exact pin is gone and BOTH lanes' kernel packages
+      # satisfy it (the release is identical across the lanes now).
+      kernel_modules_deb \
+        "zfs-module-pve-${FLAV}" "${ZFS_VER}" "${KVER}" "zfs" \
+        "linux-image-${KVER} | daemoncores-kernel-${KVER}" \
+        "PVE OpenZFS kernel modules (flavour ${FLAV})\n The OpenZFS ${ZFS_TAG} modules"
+        " built against the published linux-headers deb of the ${KVER} tree"
+        " (the ABI pair); one module ABI for both lanes of the release." \
+        /build/openzfs/module/zfs.ko /build/openzfs/module/spl.ko
+      rm -rf /build/sys /build/openzfs
     deb-glob: "zfs-module-pve-{variant}*"
     variants:
       x64v3:
