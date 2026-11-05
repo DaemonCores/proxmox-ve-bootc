@@ -525,11 +525,13 @@ packages:
         kernel_apply_patches "${GPU_NVIDIA_YML}" "amd64" "${NVIDIA_OPEN_TAG}" "/build/nvidia-open"
         unset PATCHES_SERIES
 
-        # ONE-module build (owner 05/11 midi points c/d): the build and the
-        # deb assembly move to the shared kernel_helpers — same helper as
-        # the zfs pair, ONE module ABI for both lanes of the release.
-        kernel_module_run_build "${SRCDIR}" /build/nvidia-open \
-          'make ARCH="x86_64" -C /build/nvidia-open -j"$(nproc)" modules'
+
+        # ONE-module build (owner 05/11 midi points c/d): the composed
+        # kernel_build_module gate (build + deb assembly, shared helpers) —
+        # same helper as the zfs pair, ONE module ABI for both lanes of the
+        # release. The description is composed as shell vars (one arg —
+        # kernel_build_module takes $9 desc + $10.. kos; yaml lines stay
+        # within the lint width).
         NV_KOS=()
         shopt -s nullglob
         for nko in /build/nvidia-open/kernel-open/*.ko /build/nvidia-open/*.ko; do
@@ -542,22 +544,23 @@ packages:
         # Depends LOOSENED (owner midi point e): no flavour pin, no version
         # pin — both lanes' kernel packages of the same aligned release
         # satisfy it (the deb is consumed by both).
-        kernel_modules_deb \
+        DESC="PVE NVIDIA open kernel modules pair (flavour ${KERNEL_ARCH_LEVEL})"
+        DESC="${DESC}\n The NVIDIA open-gpu-kernel-modules ${NVIDIA_OPEN_TAG} compiled against the ${KVER} tree"
+        DESC="${DESC} of this repo (the ABI pair); loader policy and GSP knobs"
+        DESC="${DESC} live in the gpu-set debs."
+        # kernel_build_module replaces the run_build+modules_deb pair; the
+        # desc is ONE shell argument (the shell-var composition above).
+        kernel_build_module "${SRCDIR}" /build/nvidia-open \
+          'make ARCH="x86_64" -C /build/nvidia-open -j"$(nproc)" modules' \
           "linux-modules-nvidia-pve-${KERNEL_ARCH_LEVEL}" "595.104.02-1" "${KVER}" \
           "drivers/video" \
           "linux-image-${KVER} | daemoncores-kernel-${KVER}" \
-          "PVE NVIDIA open kernel modules pair (flavour ${KERNEL_ARCH_LEVEL})\n The NVIDIA open-gpu-kernel-modules ${NVIDIA_OPEN_TAG}"
-          " compiled against the ${KVER} tree of this repo (the ABI pair);"
-          " loader policy and GSP knobs live in the gpu-set debs." \
-          "${NV_KOS[@]}"
+          "${DESC}" "${NV_KOS[@]}"
       fi
 
       # Free the ~10 GB source tree now that the debs are in /debs.
       rm -rf "${SRCDIR}" /build
       ls -la /debs
-    # deb-glob is NOT {variant}-substituted by expand.jq (only variant-source
-    # and variant-deps are): every variant carries its own literal glob.
-    deb-glob: "linux-*x64v1*"
     variants:
       x64v1:
         when:
@@ -738,22 +741,18 @@ packages:
       # after the modules and fails off the module (proven make5). 2.x
       # merges the submodules: EXACTLY zfs.ko (zavl/znvpair/zunicode/
       # zcommon/zpios merged) + spl.ko; the build/ .ko are kbuild probes.
-      kernel_module_run_build "${SYS}" /build/openzfs/module \
-        'make -C /build/openzfs/module -j"$(nproc)"'
-      test -s /build/openzfs/module/zfs.ko \
-        && test -s /build/openzfs/module/spl.ko \
-        || { echo "ERROR: no zfs.ko/spl.ko after the module build" >&2; exit 1; }
-
+      # The composed kernel_build_module gate below runs the build and
+      # assembles the deb (the ko presence it verifies itself).
       ZFS_VER="${ZFS_DEB_VER:-2.4.4-1}"
-      # Depends LOOSENED (owner midi point e): the release string carries the
-      # flavour; the exact pin is gone and BOTH lanes' kernel packages
-      # satisfy it (the release is identical across the lanes now).
-      kernel_modules_deb \
+      DESC="PVE OpenZFS kernel modules (flavour ${FLAV})"
+      DESC="${DESC}\n The OpenZFS ${ZFS_TAG} modules built against the published linux-headers deb"
+      DESC="${DESC} of the ${KVER} tree (the ABI pair); one module ABI for both lanes"
+      DESC="${DESC} of the release."
+      kernel_build_module "${SYS}" /build/openzfs/module \
+        'make -C /build/openzfs/module -j"$(nproc)"' \
         "zfs-module-pve-${FLAV}" "${ZFS_VER}" "${KVER}" "zfs" \
         "linux-image-${KVER} | daemoncores-kernel-${KVER}" \
-        "PVE OpenZFS kernel modules (flavour ${FLAV})\n The OpenZFS ${ZFS_TAG} modules"
-        " built against the published linux-headers deb of the ${KVER} tree"
-        " (the ABI pair); one module ABI for both lanes of the release." \
+        "${DESC}" \
         /build/openzfs/module/zfs.ko /build/openzfs/module/spl.ko
       rm -rf /build/sys /build/openzfs
     deb-glob: "zfs-module-pve-{variant}*"
