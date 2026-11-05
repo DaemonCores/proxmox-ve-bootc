@@ -152,38 +152,55 @@ packages:
         upstream: openipmi
 
   # ===========================================================================
-  # kernel-pve: the PVE packaging + the SHARED XanMod patch set, the
-  # transverse-variant strategy (Gabriel, 30/10). ONE class entry, one
-  # variant per microarch level (KERNEL_ARCH_LEVEL: x64v1 / x64v2 / x64v3 /
-  # x64v4, plus the arm64 flavours armv8.0 / armv8.2-lse / armv9-sve2);
-  # the arm64 flavours build WITHOUT a gate (owner KERNEL FINAL v2,
+  # kernel-pve: PIVOT 7.2 UNIFIÉ (owner 2026-11-05) — the source tree is the
+  # upstream MAINLINE kernel.org release (pinned KERNEL_VER below, the SAME
+  # source and mechanics as the debian lane linux-image entry:
+  # kernel_fetch_source, sha256-verified); the Proxmox packaging submodule
+  # (mirror_ubuntu-kernels) and its clone walk-back are OUT of the build path.
+  # The Proxmox identity re-enters as ADDITIVES only (owner pivot points b/c):
+  #   - patches: patches-pve.yml of the SHARED engine export, applied AFTER
+  #     the patches-shared set, dry-run ALL fuzz 0 all-or-nothing;
+  #   - release string: the lane appends "-pve" over the flavour
+  #     (LOCALVERSION=-pve at build: 7.2.15-<x64vN/arm*-flavour>-xanmod1-pve,
+  #     distinct from the debian lane release 7.2.15-...-xanmod1);
+  #   - config seed: the /boot config of the PVE repo's OWN signed kernel of
+  #     the resolved rolling version (in place since 2026-11-04); the PVE
+  #     packaging CONFIG deltas are baked into a running PVE kernel, so the
+  #     signed /boot config IS the delta carrier.
+  # ONE class entry, one variant per microarch level (KERNEL_ARCH_LEVEL:
+  # x64v1 / x64v2 / x64v3 / x64v4, plus the arm64 flavours armv8.0 /
+  # armv8.2-lse / armv9-sve2); the arm64 flavours build WITHOUT a gate (owner KERNEL FINAL v2,
   # 2026-11-03: the former coded-disabled KERNEL_ARM filter is retired —
   # seven flavours expand unconditionally; the arm64 flavours
   # cross-compile when the lane runs the arm64 arch). The build block
   # orchestrates the STANDARD kernel
-  # helpers of DaemonCores-CI scripts/kernel_helpers.sh (kernel_pve_prepare,
-  # kernel_apply_patches on the shared manifest, kernel_merge_config,
-  # kernel_build_debs) — no logic is duplicated here.
+  # helpers of DaemonCores-CI scripts/kernel_helpers.sh (kernel_fetch_source,
+  # kernel_apply_patches on the shared manifest THEN the patches-pve
+  # additive set, kernel_merge_config, kernel_build_debs) — no logic is
+  # duplicated here.
   #
   # PRODUCTION lane (not artifact-only): the debs land in /debs and go
   # through the standard builder — content-hash cache, /debs/.meta, publish
   # to the DaemonCores APT repo like every other package. The flavour IS the
-  # version suffix (CONFIG_LOCALVERSION="-x64v<n>-xanmod1", XanMod
-  # convention): no +bootc1-style suffix on the kernel — the deb version is
-  # the PVE packaging version + flavour, same as debian-bootc's linux-image
-  # carries the kernel.org version. The bootc images take the deb from that
+  # release suffix (CONFIG_LOCALVERSION="-x64v<n>-xanmod1" + the lane env
+  # LOCALVERSION=-pve, XanMod/PVE convention): no +bootc1-style suffix on
+  # the kernel — the deb version is the kernel.org release + flavour + pve,
+  # same shape as debian-bootc's linux-image (carries the kernel.org
+  # version). The bootc images take the deb from that
   # APT repo at image build (OCI image reference), the flavour being
   # selected per image; on the host the flavour is fixed at install and
   # never switched on a bootc system (immutability). Waves: no deps —
   # wave 0.
   #
-  # Version resolution: KERNEL_VERSION is resolved from the Proxmox repo
-  # itself (ROLLING anchor, owner arbitration 2026-11-03 12:55: newest
-  # proxmox-kernel-<ver>-pve of the repo, NO pin); '7.0.14'-style numbers are
-  # the PACKAGE versions. The patch series is resolved by the REAL kernel
-  # version detected at build (the packaged tree's Makefile, echoed in the
-  # build log) — the packaging number and the kernel series are two distinct
-  # things. Guard: patches are the shared manifest (file mode) and are
+  # Version resolution: the KERNEL RELEASE is the pinned KERNEL_VER (see
+  # the env block); KERNEL_VERSION resolved from the Proxmox repo
+  # (ROLLING anchor, owner arbitration 2026-11-03 12:55, newest
+  # proxmox-kernel-<ver>-pve of the repo, NO pin) now only names the
+  # packaging identity for the CONFIG SEED selection and the log — the
+  # packaging number and the kernel series are two distinct things (pivot
+  # 7.2: the series is the pinned mainline, verified against the tree's
+  # Makefile). Guard: patches are the shared manifest + the patches-pve
+  # additives (file mode) and are
   # DRY-RUN all-or-nothing before any touch of the tree (patch-guard
   # pattern); the lane-local kconfig sur-rides live in
   # kernel-pve/kconfig/ and the shared set + GPU fragments come from the
@@ -200,9 +217,13 @@ packages:
     # kernel version detected on the packaged tree. Never a copy in this
     # repo.
     env:
-      HELPERS_VER: 7
+      HELPERS_VER: 8
       # Bump when the build contract changes in a way `sources:` alone
       # cannot express (e.g. the lib's behaviour for the same tree).
+      # 8: PIVOT 7.2 unifié (owner 2026-11-05): the source tree is the pinned
+      # upstream MAINLINE tarball (kernel_fetch_source), NOT the PVE
+      # packaging; patches = shared set + patches-pve.yml additive set; the
+      # release carries the -pve LOCALVERSION suffix.
       # 7: the headers+symvers publish became the contract (see the env
       # comment block above; owner OOB scattering rule).
       # 5: THP arbitration revoked lane-side (owner 2026-11-03 13:05): the
@@ -212,13 +233,21 @@ packages:
       # flavour variants are declared.
       # 6: loadable-module support is pinned in the lane kconfig — the
       # linux-headers deb of the flavour ships beside the image deb.
-      # 7: the NVIDIA pairing build REVERTED to debian-bootc (owner 04/11
-      # OOB, scattering rule: ONE module builder, ONE symvers producer):
-      # this lane now only publishes the headers tree + full Module.symvers
-      # the single builder compiles the pairs against.
-      KERNEL_BUILD_VER: 7
+      # 7: NVIDIA pairing build REVERTED to debian-bootc (owner 04/11, ONE
+      # module builder, ONE symvers producer); 8: PIVOT 7.2 unifié
+      # (owner 2026-11-05): the tree is the pinned mainline release, the
+      # -pve suffix lands on the release, and the pairs rebuild against the
+      # fresh tree (SRCDIR local, unchanged).
+      KERNEL_BUILD_VER: 8
       KERNEL_ARCH: x86_64
       KERNEL_OUT: /debs
+      # MAINLINE SOURCE PIN (pivot 7.2, owner 2026-11-05): the kernel.org
+      # tarball the lane builds — the SAME release the debian lane pins
+      # (its temporary pin, same rationale: the engine probe checks patch
+      # PRESENCE, not applicability). Restore a rolling `track:` resolution
+      # on BOTH lanes together, never on one alone.
+      KERNEL_VER: "7.2.15"
+      KERNEL_SHA256: "d0f6b1d7324c937ccaeb5c4ca7084bfcf71db2edb3e2d3a31f0ad83a681809ab"
     build: |
       # Shared data (owner arbitration 2026-11-03 12:55): the patch set AND
       # the kconfig fragments (incl. the GPU sets) come from the ENGINE
@@ -277,37 +306,49 @@ packages:
 
       mkdir -p /build /debs
 
-      # Standard kernel helpers (DaemonCores-CI scripts/kernel_helpers.sh,
-      # sourced implicitly by deb_helpers.sh): packaging fetch, kconfig merge,
-      # make deb-pkg.
-      mkdir -p /build && kernel_pve_prepare /build
+      # SOURCE (pivot 7.2 unifié, owner 2026-11-05): the upstream MAINLINE
+      # kernel.org tarball, downloaded and sha256-verified by the STANDARD
+      # helper (the debian lane's mechanism — same source, same helper); the
+      # PVE packaging clone (kernel_pve_prepare/kernel_pve_clone_packaging)
+      # and its mirror_ubuntu-kernels submodule are OUT of the build path.
+      # kernel_fetch_source sets SRCDIR. bindeb-pkg does not require git
+      # linkage (the debian lane builds it from the same kind of tree).
+      kernel_fetch_source "${KERNEL_VER}" "${KERNEL_SHA256}"
 
-      # REAL kernel series detection (owner arbitration 2026-11-03 12:55):
-      # the PVE packaging version resolved above is NOT the kernel series —
-      # read the packaged tree's Makefile (that is what the XanMod/CachyOS
-      # upstream series dirs serve) and resolve the patch series from it,
-      # echoed in the build log.
-      REAL_KVER=$(awk '/^VERSION *=/{v=$3} /^PATCHLEVEL *=/{p=$3} \
+      # Identity guard (the tarball pin and the ACTUAL tree must agree —
+      # the night cost of a wrong-path resolution made this a hard check):
+      # the tree Makefile is the truth the patch manifests resolve against.
+      TREE_KVER=$(awk '/^VERSION *=/{v=$3} /^PATCHLEVEL *=/{p=$3} \
         /^SUBLEVEL *=/{s=$3} END{print v"."p"."s}' "${SRCDIR}/Makefile")
-      [[ "${REAL_KVER}" == *.*.* ]] \
-        || { echo "ERROR: cannot read the real kernel version from ${SRCDIR}/Makefile" >&2; exit 1; }
-      echo "kernel-pve: REAL kernel series detected on the packaged tree: ${REAL_KVER}"
+      [[ "${TREE_KVER}" == "${KERNEL_VER}" ]] \
+        || { echo "ERROR: tree ${TREE_KVER} != pinned KERNEL_VER ${KERNEL_VER}" >&2; exit 1; }
+      echo "kernel-pve: mainline tree ${TREE_KVER} (PVE packaging identity resolved above)"
 
-      # Patch mode: the SHARED manifest of the engine export (file mode of
-      # the standard helper — this entry defines NO native patch data).
-      # Debian arch of the patch stage, derived from the kernel arch dir.
+      # Patch mode: the SHARED manifest FIRST, then the PVE ADDITIVE set of
+      # the same engine export (pivot 7.2, owner points a/b/c — this entry
+      # defines NO native patch data). Debian arch of the patch stage,
+      # derived from the kernel arch dir. Both manifests dry-run ALL fuzz 0
+      # all-or-nothing inside the helper; patches-pve.yml entries carry
+      # sha256 pins (mirror .patch bytes are immutable).
       case "${KERNEL_ARCH}" in
         x86_64) DEB_ARCH=amd64 ;;
         *) DEB_ARCH="${KERNEL_ARCH}" ;;
       esac
       kernel_apply_patches "${PATCHES_FILE}" \
-        "${DEB_ARCH}" "${REAL_KVER}" "${SRCDIR}"
+        "${DEB_ARCH}" "${KERNEL_VER}" "${SRCDIR}"
+      PVE_PATCHES_FILE="${CI_KERNEL_SHARED}/patches-pve.yml"
+      [[ -f "${PVE_PATCHES_FILE}" ]] \
+        || { echo "ERROR: CI_KERNEL_SHARED patches-pve.yml missing (guards an older engine checkout from silently skipping the PVE set)" >&2; exit 1; }
+      kernel_apply_patches "${PVE_PATCHES_FILE}" \
+        "${DEB_ARCH}" "${KERNEL_VER}" "${SRCDIR}"
 
-      # Rolling seed (2026-11-04: the -28 PVE packaging ships NO base
-      # .config -> fragments merged alone produced a THIN kernel — CONFIG_PCI
-      # went unset, the NVIDIA pair refuses to compile on it). The seed = the
-      # PVE repo's OWN signed kernel of the SAME resolved version (its
-      # /boot config), downloaded at build: honest rolling, zero pin.
+      # CONFIG SEED (pivot 7.2, owner point d — in place, unchanged): a
+      # mainline tarball carries no .config, so the seed is ALWAYS taken:
+      # the /boot config of the PVE repo's OWN signed kernel (its rolling
+      # reference, honest — zero pin). The PVE packaging CONFIG deltas
+      # (PVE_CONFIG_OPTS) are baked into a running PVE kernel by the same
+      # scripts/config pass its rules run, so the signed /boot config IS
+      # the delta carrier; lane-local deviations stay in kernel-pve/kconfig.
       if [[ ! -s "${SRCDIR}/.config" ]]; then
         SEED_PKG=$(apt-cache search --names-only '^proxmox-kernel-[0-9]' \
           | awk '{print $1}' | grep -- '-signed$' | sort -V | tail -1)
@@ -328,8 +369,6 @@ packages:
         cp "${SEED_CFG}" "${SRCDIR}/.config"
         echo "kernel-pve: seed config taken from ${SEED_D} (${SEED_CFG##*/}) "
       fi
-
-      [[ -z "${PVE_SEED_CONFIG}" ]] || cp "${PVE_SEED_CONFIG}" "${SRCDIR}/.config"
 
       # Shared kconfig fragments + GPU sets (single source: the engine export,
       # same checkout that carries the patch manifest) and the lane-local
@@ -374,22 +413,31 @@ packages:
       fi
       shopt -u nullglob
 
+      # LANE IDENTITY (pivot 7.2, owner point c): -pve lands on the release
+      # for EVERY flavour (arm64 cross includes), before the build branch.
+      export LOCALVERSION="-pve"
+
       if [[ "${KERNEL_ARCH}" = "x86_64" ]]; then
         # ONE flavour per variant (KERNEL_ARCH_LEVEL). KCFLAGS carries the
         # microarch (-march=x86-64-vN). The lane sur-rides are merged last so
         # NEVER always wins over the shared fragment's ALWAYS pin.
         kernel_merge_config "${SRCDIR}" "${FRAGS[@]}"
-        # The pinned Ubuntu tree's objtool klp-checksum.c does not compile
-        # (it calls static helpers of check.c) and objtool builds it whenever
-        # libxxhash headers exist on the host. klp-build is only needed with
-        # CONFIG_KLP_BUILD, so skip it unless the merged config enables it.
+        # KLP guard (doctrine non-modifiable, remains): the objtool
+        # klp-checksum tool is not built unless the merged config asks for
+        # it; plus the LANE IDENTITY suffix (pivot 7.2, owner point c): the
+        # env LOCALVERSION appends "-pve" OVER the flavour
+        # (7.2.15-<x64vN>-xanmod1-pve — distinct from the debian lane's
+        # 7.2.15-<x64vN>-xanmod1; the deb names and /lib/modules carry it).
         grep -q '^CONFIG_KLP_BUILD=y' "${SRCDIR}/.config" \
-          || export KERNEL_MAKE_ARGS="ARCH_HAS_KLP=n"
+          || KERNEL_MAKE_ARGS="ARCH_HAS_KLP=n"
+        # The env LOCALVERSION (not only a make variable) so the
+        # setlocalversion subprocess sees it in the environment.
+        export KERNEL_MAKE_ARGS="${KERNEL_MAKE_ARGS:-} LOCALVERSION=-pve"
         KCFLAGS=$(kernel_flavour_kcflags "${KERNEL_ARCH_LEVEL}")
         kernel_build_debs "${SRCDIR}" bindeb-pkg "${KCFLAGS}"
       else
         # arm64 flavours: ONE kernel per flavour, cross-compiled (no gate, KERNEL FINAL v2).
-        [[ -z "${PVE_SEED_CONFIG}" ]] && make -C "${SRCDIR}" defconfig
+        make -C "${SRCDIR}" defconfig
         [[ -s "${LANE_KCFG}/arm64-common.cfg" ]] && \
           FRAGS+=("${LANE_KCFG}/arm64-common.cfg")
         kernel_merge_config "${SRCDIR}" "${FRAGS[@]}"
