@@ -635,41 +635,74 @@ packages:
     env:
       ZFS_TAG: "zfs-2.4.4"
       ZFS_DEB_VER: "2.4.4-1"
+    # INTRA-RUN DEPENDENCE (lane fix 05/11): the modules build against the
+    # flavour's headers of the SAME run — variant-deps places every
+    # zfs-module-pve-<flav> one wave AFTER kernel-pve-<flav>, and
+    # build-one-deb feeds the kernel debs (incl. linux-headers) locally.
+    # Standalone dispatches (only=) fall back to the published index.
+    variant-deps: ["kernel-pve-{variant}"]
     build: |
       FLAV="${VARIANT}"
       test -n "${FLAV}" \
         || { echo "ERROR: zfs-module-pve needs a flavour variant" >&2; exit 1; }
       mkdir -p /build /debs
 
-      # The flavour's published headers deb, resolved from THIS repo's APT
-      # index (PAGES_URL — the same base build-deb.sh derives; trixie is
-      # the dist bootc-debs-end publishes). No version committed here: the
-      # newest build of the flavour wins, and the ALIGNED (plain, no -pve)
-      # release string is preferred — the one-module ABI deb must be built
-      # on the plain tree (owner 05/11 midi); the legacy -pve headers are
-      # only a transition fallback and keep their old modversions ABI.
-      BASE="https://daemoncores.github.io/$(printf '%s' "${GITHUB_REPOSITORY:?}" | cut -d/ -f2 | tr '[:upper:]' '[:lower:]')"
-      test -z "${PAGES_URL:-}" || BASE="${PAGES_URL%/}"
-      IDX="${BASE}/dists/trixie/main/binary-amd64/Packages"
-      curl -fsSL "${IDX}" -o /build/Packages \
-        || { echo "ERROR: cannot read the APT index ${IDX}" >&2; exit 1; }
-      # Prefer the ALIGNED (plain, no -pve) headers when both spellings
-      # exist; otherwise fall back to the legacy -pve tree (transition only).
-      HDR_NAME=$(grep '^Package: linux-headers-' /build/Packages \
-        | sed 's/^Package: //' \
-        | grep -- "-${FLAV}-xanmod1\$" | sort -rV | head -1)
-      test -n "${HDR_NAME}" \
-        || HDR_NAME=$(grep '^Package: linux-headers-' /build/Packages \
+      # HEADERS SOURCE (intra-run, lane owner 05/11): the entry DECLARES
+      # variant-deps: kernel-pve-<flav> — the wave planner places it one
+      # wave AFTER the kernel jobs and build-one-deb drops the SAME RUN's
+      # kernel debs (linux-image + linux-headers) into /tmp/prior and
+      # apt-installs them BEFORE this block runs. No cross-repo fetch, no
+      # race against the Pages publish — the wave0 course that killed the
+      # first dispatches (headers simply absent from a still-empty index:
+      # `no linux-headers for flavour x64v1 in the APT index`). The local
+      # preference stays the ALIGNED (plain, no -pve) release string — the
+      # one-module ABI pair; the legacy -pve tree is a transition fallback
+      # only. STANDALONE dispatch (only=zfs-module-pve: the dispatch-only
+      # filter strips the deps it cannot satisfy intra-run) /tmp/prior is
+      # then empty and the PUBLISHED APT index of THIS repo remains the
+      # fallback source (kernels of a previous green run).
+      HDR_DEB=""
+      for d in /tmp/prior/linux-headers-*"${FLAV}"*-xanmod1_*.deb; do
+        [[ -e ${d} ]] || continue
+        HDR_DEB="${d}"
+        break
+      done
+      HDR_NAME=""
+      test -n "${HDR_DEB}" \
+        || for d in /tmp/prior/linux-headers-*"${FLAV}"*-xanmod1-pve_*.deb; do
+          [[ -e ${d} ]] || continue
+          HDR_DEB="${d}"
+          break
+        done
+      if test -n "${HDR_DEB}"; then
+        cp -- "${HDR_DEB}" /build/headers.deb
+        HDR_NAME="$(dpkg-deb -f /build/headers.deb Package)"
+      else
+        BASE="https://daemoncores.github.io/$(printf '%s' "${GITHUB_REPOSITORY:?}" | cut -d/ -f2 | tr '[:upper:]' '[:lower:]')"
+        test -z "${PAGES_URL:-}" || BASE="${PAGES_URL%/}"
+        IDX="${BASE}/dists/trixie/main/binary-amd64/Packages"
+        curl -fsSL "${IDX}" -o /build/Packages \
+          || { echo "ERROR: cannot read the APT index ${IDX}" >&2; exit 1; }
+        # Prefer the ALIGNED (plain, no -pve) headers when both spellings
+        # exist; otherwise fall back to the legacy -pve tree (transition only).
+        HDR_NAME=$(grep '^Package: linux-headers-' /build/Packages \
           | sed 's/^Package: //' \
-          | grep -- "-${FLAV}-xanmod1-pve\$" | sort -rV | head -1)
-      echo "zfs-module-pve: headers selected: ${HDR_NAME:-<none>}"
-      test -n "${HDR_NAME}" \
-        || { echo "ERROR: no linux-headers for flavour ${FLAV} in the APT index" >&2; exit 1; }
-      curl -fsSL "${BASE}/$(sed -n "s/^Filename: //p" /build/Packages \
-        | grep -F "${HDR_NAME}_" | head -1)" -o /build/headers.deb \
-        || { echo "ERROR: cannot download ${HDR_NAME}" >&2; exit 1; }
+          | grep -- "-${FLAV}-xanmod1\$" | sort -rV | head -1)
+        test -n "${HDR_NAME}" \
+          || HDR_NAME=$(grep '^Package: linux-headers-' /build/Packages \
+            | sed 's/^Package: //' \
+            | grep -- "-${FLAV}-xanmod1-pve\$" | sort -rV | head -1)
+        echo "zfs-module-pve: headers selected: ${HDR_NAME:-<none>}"
+        test -n "${HDR_NAME}" \
+          || { echo "ERROR: no linux-headers for flavour ${FLAV} in the APT index" >&2; exit 1; }
+        curl -fsSL "${BASE}/$(sed -n "s/^Filename: //p" /build/Packages \
+          | grep -F "${HDR_NAME}_" | head -1)" -o /build/headers.deb \
+          || { echo "ERROR: cannot download ${HDR_NAME}" >&2; exit 1; }
+      fi
       KVER=$(dpkg-deb -f /build/headers.deb Package | sed 's/^linux-headers-//')
-      echo "zfs-module-pve: building against ${KVER} (${HDR_NAME})"
+      SRC="intra-run dep deb (${HDR_DEB})"
+      test -n "${HDR_DEB}" || SRC="published APT index"
+      echo "zfs-module-pve: building against ${KVER} (${SRC})"
 
       apt-get update >/dev/null
       apt-get install -y --no-install-recommends \
