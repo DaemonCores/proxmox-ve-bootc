@@ -315,6 +315,11 @@ packages:
       # linkage (the debian lane builds it from the same kind of tree).
       kernel_fetch_source "${KERNEL_VER}" "${KERNEL_SHA256}"
 
+      # The runner inherits ARCH=amd64; the kernel arch dir is x86_64 —
+      # export BEFORE any make (olddefconfig, bindeb-pkg): make would look
+      # for arch/amd64/Makefile otherwise (first pivot run, live).
+      export ARCH="${KERNEL_ARCH}"
+
       # Identity guard (the tarball pin and the ACTUAL tree must agree —
       # the night cost of a wrong-path resolution made this a hard check):
       # the tree Makefile is the truth the patch manifests resolve against.
