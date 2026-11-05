@@ -302,7 +302,7 @@ packages:
       KERNEL_VERSION="${KERNEL_VERSION:-$(apt-cache search --names-only '^proxmox-kernel-[0-9]' \
         | awk '{print $1}' \
         | grep -E '^proxmox-kernel-[0-9][0-9.]*-[0-9]+-pve$' \
-        | sed 's/^proxmox-kernel-//' | sort -V | tail -1)}" 
+        | sed 's/^proxmox-kernel-//' | sort -V | tail -1)}"
       test -n "${KERNEL_VERSION}" \
         || { echo "ERROR: cannot resolve the PVE kernel version from the repo (rolling anchor)" >&2; exit 1; }
       echo "kernel-pve: PVE kernel package version in build: ${KERNEL_VERSION}"
@@ -543,7 +543,11 @@ packages:
           -name "modules.*" -delete
 
         VERSION="595.104.02-1"
-        printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: DaemonCores <packaging@daemoncores.org>\nDepends: linux-image-%s\nDescription: PVE NVIDIA open kernel modules pair (flavour %s)\n The NVIDIA open-gpu-kernel-modules 595.104.02 compiled against the kernel-pve %s tree of this repo (the ABI pair); loader policy and GSP knobs live in the gpu-set debs.\n' \
+        DESC='Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: DaemonCores <packaging@daemoncores.org>\nDepends: linux-image-%s\n'
+        DESC="${DESC}"'Description: PVE NVIDIA open kernel modules pair (flavour %s)\n The NVIDIA open-gpu-kernel-modules 595.104.02'
+        DESC="${DESC}"' compiled against the kernel-pve %s tree of this repo (the ABI pair);'
+        DESC="${DESC}"' loader policy and GSP knobs live in the gpu-set debs.\n'
+        printf "${DESC}" \
           "${NV_PKG}" "${VERSION}" "$(dpkg --print-architecture)" "${KVER}" "${KERNEL_ARCH_LEVEL}" "${KVER}" \
           > "${DESTDIR}/DEBIAN/control"
         ( cd "${DESTDIR}" && find . -type f | sed 's|^\./||' >> DEBIAN/md5sums )
