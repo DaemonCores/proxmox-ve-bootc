@@ -213,15 +213,22 @@ packages:
       FLAV="${VARIANT}"
       test -n "${FLAV}" \
         || { echo "ERROR: zfs-module-pve needs a flavour variant" >&2; exit 1; }
+      echo "zfs-module-pve: block entered (flavour ${FLAV})"
       mkdir -p /build /debs
+      # The published APT index the headers (and the kernel-seed deb) come
+      # from: the DEBIAN side pages by default — THIS repo's index carries no
+      # kernel debs any more (owner FINAL architecture). PAGES_URL overrides
+      # for an orchestrator that mirrors the kernel debs.
+      BASE="${PAGES_URL:-https://daemoncores.github.io/debian-bootc}"
+      BASE="${BASE%/}"
 
       # HEADERS SOURCE (owner FINAL architecture 05/11 13:0x): the kernel-pve
       # entry is gone, so there is NO intra-run wave any more — the headers
-      # are the PUBLISHED linux-headers deb of the unified kernel on this
-      # repo's APT index (the debian side publish feeds the same Pages
-      # pool/index). /tmp/prior stays supported when an orchestrator feeds
-      # prior-wave kernel debs (the legacy -pve spelling is a transition
-      # fallback only); without them the published index is the source.
+      # are the PUBLISHED linux-headers deb of the unified kernel on the
+      # DEBIAN side APT index (BASE above; proven live 09/11: this repo's
+      # own index carries zero kernel packages). /tmp/prior stays supported
+      # when an orchestrator feeds prior-wave kernel debs (the -pve
+      # spelling is a transition fallback only).
       HDR_DEB=""
       for d in /tmp/prior/linux-headers-*"${FLAV}"*-xanmod1_*.deb; do
         [[ -e ${d} ]] || continue
@@ -239,30 +246,38 @@ packages:
         cp -- "${HDR_DEB}" /build/headers.deb
         HDR_NAME="$(dpkg-deb -f /build/headers.deb Package)"
       else
-        BASE="https://daemoncores.github.io/$(printf '%s' "${GITHUB_REPOSITORY:?}" | cut -d/ -f2 | tr '[:upper:]' '[:lower:]')"
-        test -z "${PAGES_URL:-}" || BASE="${PAGES_URL%/}"
+        # HEADERS live on the DEBIAN side publish (see BASE above); an
+        # orchestrator's PAGES_URL override is already folded into BASE.
         IDX="${BASE}/dists/trixie/main/binary-amd64/Packages"
+        echo "zfs-module-pve: reading the APT index ${IDX}"
         curl -fsSL "${IDX}" -o /build/Packages \
           || { echo "ERROR: cannot read the APT index ${IDX}" >&2; exit 1; }
-        # Prefer the ALIGNED (plain, no -pve) headers when both spellings
-        # exist; otherwise fall back to the legacy -pve tree (transition only).
-        HDR_NAME=$(grep '^Package: linux-headers-' /build/Packages \
-          | sed 's/^Package: //' \
-          | grep -- "-${FLAV}-xanmod1\$" | sort -rV | head -1)
+        # prefer the ALIGNED (plain, no -pve) headers when both spellings
+        # exist; otherwise the legacy -pve tree (transition only).
+        HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
+          p ~ /-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
+          | sort -rV | head -1)
         test -n "${HDR_NAME}" \
-          || HDR_NAME=$(grep '^Package: linux-headers-' /build/Packages \
-            | sed 's/^Package: //' \
-            | grep -- "-${FLAV}-xanmod1-pve\$" | sort -rV | head -1)
+          || HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
+            p ~ /-'"${FLAV}"'-xanmod1-pve$/ {print p}' /build/Packages | head -1)
         echo "zfs-module-pve: headers selected: ${HDR_NAME:-<none>}"
         test -n "${HDR_NAME}" \
-          || { echo "ERROR: no linux-headers for flavour ${FLAV} in the APT index" >&2; exit 1; }
-        curl -fsSL "${BASE}/$(sed -n "s/^Filename: //p" /build/Packages \
-          | grep -F "${HDR_NAME}_" | head -1)" -o /build/headers.deb \
-          || { echo "ERROR: cannot download ${HDR_NAME}" >&2; exit 1; }
+          || { echo "ERROR: no linux-headers for flavour ${FLAV} in the APT index ${IDX}" >&2; exit 1; }
       fi
+      # Filename of a package stanza, resolved by NAME (the deb file name is
+      # NOT derived from the package name: the headers are republished as
+      # linux-headers${SUFFIX}_${VER}_${arch}.deb). Reset on the blank line
+      # between stanzas so a match never leaks into the next entry.
+      _filename_by_pkg() {
+        awk -v want="$1" '$0 == "" {getf=0}
+          getf && $1 == "Filename:" {print $2; getf=0; exit}
+          $1 == "Package:" && $2 == want {getf=1}' "${2:-/build/Packages}"
+      }
+      curl -fsSL "${BASE}/$(_filename_by_pkg "${HDR_NAME}")" -o /build/headers.deb \
+        || { echo "ERROR: cannot download ${HDR_NAME}" >&2; exit 1; }
       KVER=$(dpkg-deb -f /build/headers.deb Package | sed 's/^linux-headers-//')
       SRC="intra-run dep deb (${HDR_DEB})"
-      test -n "${HDR_DEB}" || SRC="published APT index"
+      test -n "${HDR_DEB}" || SRC="published APT index (${BASE})"
       echo "zfs-module-pve: building against ${KVER} (${SRC})"
 
       apt-get update >/dev/null
@@ -274,10 +289,40 @@ packages:
       SYS="$(find /build/sys -maxdepth 3 -type d -name "linux-headers-${KVER}" | head -1)"
       test -n "${SYS}" \
         || { echo "ERROR: no linux-headers-${KVER} tree in the deb" >&2; exit 1; }
-      test -s "${SYS}/Module.symvers" && test -s "${SYS}/Makefile" \
+      test -s "${SYS}/Makefile" \
         || { echo "ERROR: ${SYS} is not a module-ready headers tree" >&2; exit 1; }
       grep -qF "\"${KVER}\"" "${SYS}/include/generated/utsrelease.h" \
         || { echo "ERROR: headers tree UTS_RELEASE != ${KVER}" >&2; exit 1; }
+      # The kbuild tree of a module pair needs the symbol table and the
+      # resolved kernel config: the republished kernel deb carries both (at
+      # /usr/lib/linux-kernel-build${SUFFIX}/) and the headers deb only
+      # sometimes. Seed from the daemoncores-kernel-${KVER} deb of the SAME
+      # index before any guard can fail (the debian module entries do the
+      # same — SEED_DIR from COMMON_DEB).
+      if ! test -s "${SYS}/Module.symvers" || ! test -s "${SYS}/.config"; then
+        test -f /build/Packages || curl -fsSL "${BASE}/dists/trixie/main/binary-amd64/Packages" -o /build/Packages \
+          || { echo "ERROR: cannot read the APT index ${BASE}/dists/trixie/main/binary-amd64/Packages" >&2; exit 1; }
+        KPKG=$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
+          | sort -rV | head -1)
+        echo "zfs-module-pve: symvers/config seed from: ${KPKG:-<missing>}"
+        test -n "${KPKG}" \
+          || { echo "ERROR: no daemoncores-kernel-*-${FLAV}-xanmod1 deb in the APT index to seed the module tree from" >&2; exit 1; }
+        rm -rf /build/kseed
+        curl -fsSL "${BASE}/$(_filename_by_pkg "${KPKG}")" -o /build/kernel.deb \
+          || { echo "ERROR: cannot download ${KPKG}" >&2; exit 1; }
+        mkdir -p /build/kseed
+        dpkg-deb -x /build/kernel.deb /build/kseed
+        SEED="$(find /build/kseed -type d -path '*/usr/lib/linux-kernel-build*' -maxdepth 6 | head -1)"
+        test -n "${SEED}" \
+          || { echo "ERROR: ${KPKG} carries no /usr/lib/linux-kernel-build tree" >&2; exit 1; }
+        test -s "${SEED}/Module.symvers" \
+          || { echo "ERROR: ${SEED} carries no Module.symvers" >&2; exit 1; }
+        cp "${SEED}/Module.symvers" "${SYS}/Module.symvers"
+        KCFG="$(find "${SEED}" \( -name .config -o -name config \) -type f | head -1)"
+        test -s "${KCFG}" && cp "${KCFG}" "${SYS}/.config"
+      fi
+      test -s "${SYS}/Module.symvers" && test -s "${SYS}/.config" \
+        || { echo "ERROR: ${SYS} seeded incomplete (Module.symvers/.config missing)" >&2; exit 1; }
       # ABI guard (owner midi): the pair must NOT carry modversions CRCs —
       # the aligned tree was merged with CONFIG_MODVERSIONS=n (modules.cfg).
       grep -q '^CONFIG_MODVERSIONS=y' "${SYS}/.config" \
