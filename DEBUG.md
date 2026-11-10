@@ -19,3 +19,7 @@
 
 ## TICK R-852 (2026-11-10 09:5x)
 - Run ciblée 42784932243: zfs-module-pve-x64v3 SUCCESS + publish APT (index vérifié). Verdict VE 41920282450: debs ok, images FAIL = base ghcr latest_arm64/latest_amd64 jamais publiée depuis le split (ghcr = buildenv only). Dispatch vanille 42786444311 plan complet pour publier les 2 bases; watcher v13 rerun VE ensuite.
+
+## TICK R-864 lane A (10/11 18:xx) — SB kernel signature
+- Run 42859446971 (e59a027, SB=1 via tests.yml) red: firmware screen 'Verification failed: (0x1A) Security Violation' en boucle juste après BdsDxe Boot0002. Réplique SB locale (q35,smm=on + OVMF_CODE.secboot.4m + varstore virt-fw-vars identique au harness: db=ms-uefi-2011/2023+sb.crt, MokList=sb.crt): la chaîne shim->grub->static cfg->blscfg->entries passe TOUTE, l'échec est l'entrée BLS: grub shim_lock_verifier_write 'bad shim signature' = vmlinuz-7.0.14-28-pve signé Proxmox ('Secure Boot Sign 2023', cert extrait du vmlinuz, expir. 2027) jamais enrollé. Avec le cert Proxmox en Mok: le même boot amène le noyau au initrd (proof local).
+- FIX 8a0xxxx (ce commit): src/pvepostinstall/usr/share/debian-bootc/mok.d/proxmox-secureboot-sign-2023.pem — le mécanisme harness (build_sb_vars) enrolle les certs du mok.d de l'image, le lane fork utilisait déjà ce point d'extension.
