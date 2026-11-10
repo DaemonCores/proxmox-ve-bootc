@@ -30,3 +30,9 @@
 - FIX caa1655: src/pvepostinstall/usr/lib/systemd/system/dc-gpu-apply.service (override complet du unit de base, edge Before=systemd-modules-load retirée, After local-fs/tmpfiles/ldconfig conservés). systemd-analyze verify OK (seule warn binaire dc-gpu absent sur l'hôte). Local docker inspect du image f93f01d0: le unit de base y est exactement au même path → l'override COPY ./src/pvepostinstall / le gagne.
 - Local install repro BLOQUÉ par le sec-gate (contenu install-fs.sh classé risqué = file pour /gate review); la preuve passe donc par l'artefact CI (suffisant: le mécanisme 'tmpfiles → authorized_keys' est exactement celui du run vert debian-bootc).
 
+## TICK R-865 bis lane A2 (10/11 ~20h) — VERDICT AM64 SUCCESS
+- Dispatch 42871462664 (67eafe4) annulé par cancel-in-progress: push 4d2042c d'une lane concurrente à 19:10. Doctrine respectée: verdict attendu sur LE run en vol, pas de re-dispatch.
+- Run 42872459247 (4d2042c): SSH AUTH RÉPARÉE — 'SSH reachable after 19s', PASS 'booted through bootc', PASS 'no failed systemd units' (pvestatd/pveproxy/pvedaemon verts). Restait 2 assertions test rouges: 'openipmi repacked' (paquet jamais installé dans l'image) + 'ifupdown2 ships unmodified upstream' (base debian-bootc publie +bootc8 qui gagne le dpkg race) — corrigées par la lane concurrente 84a3234 (install openipmi + re-anchor du guard).
+- Run 42875708498 (84a3234): JOB 'Build images (amd64)' = SUCCESS — image built/linted/pushed, SSH 19s, 42 PASS / 0 FAIL. MANDAT A2 CLOS: la chaîne boot vanilla QEMU TCG + SSH CI est verte.
+- Mur arm64 restant (blocker dur documenté, PENDING-UPSTREAM — non touché): build image arm64 meurt au full-upgrade apt: pve-manager 9.2.26+bootc1 Depends libpve-access-control >= 9.2.0~ / libpve-rs-perl >= 0.16.0 / proxmox-widget-toolkit >= 5.2.12 absents du repo ARM64 Proxmox (9.1.2 publié); cascade FATAL prune 'no proxmox-kernel module tree' (KVER jamais résolu faute d'install).
+
