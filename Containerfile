@@ -92,11 +92,15 @@ RUN chmod +x /usr/sbin/policy-rc.d \
     && dpkg --purge 2>/dev/null \
         $(dpkg -l 'daemoncores-kernel-*' | awk '/^ii/{print $2}') \
         || true \
-    && KVER=$(dpkg -l 'proxmox-kernel-*' | awk '/^ii/{print $2}' \
-        | grep -v -- '-signed$' | grep -v -- '-dbgsym' \
-        | sed -n 's/^proxmox-kernel-\([0-9][^ ]*\)$/\1/p' | head -1) \
-    && KVER="${KVER:-$(ls -1v /usr/lib/modules | tail -1)}" \
-    && [ -d "/usr/lib/modules/${KVER}" ] \
+    && KVER=$(for k in $(dpkg -l 'proxmox-kernel-*' | awk '/^ii/{print $2}' \
+        | grep -v -- '-dbgsym$' \
+        | sed -n -e 's/^proxmox-kernel-\([0-9][^ ]*\)-signed$/\1/p' -e 's/^proxmox-kernel-\([0-9][^ ]*\)$/\1/p' \
+        | sort -ru); do \
+        [ -d "/usr/lib/modules/$k" ] && echo "$k" && break; done) \
+    && case "${KVER}" in \
+        [0-9]*-pve) : ;; \
+        *) echo "FATAL prune: no proxmox-kernel module tree resolved (packages: $(dpkg -l 'proxmox-kernel-*' | awk '/^ii/{print $2}' | tr '\n' ' '), trees: $(ls -A /usr/lib/modules | tr '\n' ' '))" >&2; exit 1 ;; \
+       esac \
     && find /usr/lib/modules -mindepth 1 -maxdepth 1 ! -name "${KVER}" -exec rm -rf {} +
 
 # Post install patch
