@@ -252,11 +252,18 @@ packages:
         echo "zfs-module-pve: reading the APT index ${IDX}"
         curl -fsSL "${IDX}" -o /build/Packages \
           || { echo "ERROR: cannot read the APT index ${IDX}" >&2; exit 1; }
-        # prefer the ALIGNED (plain, no -pve) headers when both spellings
-        # exist; otherwise the legacy -pve tree (transition only).
+        # PROFILES first (owner 05/11 midi: the profile identity lives in the
+        # packaging — the headers Package carries the profile infix while the
+        # tree keeps the SHARED UTS release). The PVE host kernel = the VM
+        # profile (THP never), so prefer linux-headers-vm-<flav> explicitly;
+        # the generic aligned fallback and the legacy -pve tree follow.
         HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
-          p ~ /-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
+          p ~ /^linux-headers-vm-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
           | sort -rV | head -1)
+        test -n "${HDR_NAME}" \
+          || HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
+            p ~ /-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
+            | sort -rV | head -1)
         test -n "${HDR_NAME}" \
           || HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
             p ~ /-'"${FLAV}"'-xanmod1-pve$/ {print p}' /build/Packages | head -1)
@@ -275,7 +282,18 @@ packages:
       }
       curl -fsSL "${BASE}/$(_filename_by_pkg "${HDR_NAME}")" -o /build/headers.deb \
         || { echo "ERROR: cannot download ${HDR_NAME}" >&2; exit 1; }
-      KVER=$(dpkg-deb -f /build/headers.deb Package | sed 's/^linux-headers-//')
+      # The profile lane names the headers Package linux-headers-<profile>-<UTS>
+      # while the tree inside keeps the SHARED release string (the profile
+      # identity lives in the packaging only — owner 05/11 midi). Parse the
+      # profile off the package name; KVER stays the UTS release.
+      HDR_PKG=$(dpkg-deb -f /build/headers.deb Package)
+      HDR_PROFILE=""
+      case "${HDR_PKG}" in
+        linux-headers-vm-*) HDR_PROFILE=vm ;;
+        linux-headers-ia-*) HDR_PROFILE=ia ;;
+      esac
+      KVER="${HDR_PKG#linux-headers-}"
+      KVER="${KVER#${HDR_PROFILE}-}"
       SRC="intra-run dep deb (${HDR_DEB})"
       test -n "${HDR_DEB}" || SRC="published APT index (${BASE})"
       echo "zfs-module-pve: building against ${KVER} (${SRC})"
@@ -286,9 +304,11 @@ packages:
 
       rm -rf /build/sys && mkdir -p /build/sys
       dpkg-deb -x /build/headers.deb /build/sys
-      SYS="$(find /build/sys -maxdepth 3 -type d -name "linux-headers-${KVER}" | head -1)"
+      # The tree name inside the deb is the UTS release (may differ from the
+      # package suffix — profile packaging). Discover it by CONTENT.
+      SYS="$(find /build/sys -maxdepth 3 -type d -path '*/usr/src/linux-headers-*' | head -1)"
       test -n "${SYS}" \
-        || { echo "ERROR: no linux-headers-${KVER} tree in the deb" >&2; exit 1; }
+        || { echo "ERROR: no linux-headers tree in the deb" >&2; exit 1; }
       test -s "${SYS}/Makefile" \
         || { echo "ERROR: ${SYS} is not a module-ready headers tree" >&2; exit 1; }
       grep -qF "\"${KVER}\"" "${SYS}/include/generated/utsrelease.h" \
@@ -302,8 +322,10 @@ packages:
       if ! test -s "${SYS}/Module.symvers" || ! test -s "${SYS}/.config"; then
         test -f /build/Packages || curl -fsSL "${BASE}/dists/trixie/main/binary-amd64/Packages" -o /build/Packages \
           || { echo "ERROR: cannot read the APT index ${BASE}/dists/trixie/main/binary-amd64/Packages" >&2; exit 1; }
-        KPKG=$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
+        KPKG=$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-vm-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
           | sort -rV | head -1)
+        KPKG="${KPKG:-$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
+          | sort -rV | head -1)}"
         echo "zfs-module-pve: symvers/config seed from: ${KPKG:-<missing>}"
         test -n "${KPKG}" \
           || { echo "ERROR: no daemoncores-kernel-*-${FLAV}-xanmod1 deb in the APT index to seed the module tree from" >&2; exit 1; }
@@ -351,10 +373,14 @@ packages:
       DESC="${DESC}\n The OpenZFS ${ZFS_TAG} modules built against the published linux-headers deb"
       DESC="${DESC} of the ${KVER} tree (the ABI pair); one module ABI for both lanes"
       DESC="${DESC} of the release."
+      # Depends on the ACTUAL profile package the PVE host installs: the
+      # profile lane renames the image debs daemoncores-kernel-<profile>-<KVER>
+      # (owner 05/11 midi). The legacy spelling stays the non-profile fallback.
+      ZDEP="$([ -n "${HDR_PROFILE}" ] && echo "daemoncores-kernel-${HDR_PROFILE}-${KVER}" || echo "linux-image-${KVER} | daemoncores-kernel-${KVER}")"
       kernel_build_module "${SYS}" /build/openzfs/module \
         'make -C /build/openzfs/module -j"$(nproc)"' \
         "zfs-module-pve-${FLAV}" "${ZFS_VER}" "${KVER}" "zfs" \
-        "linux-image-${KVER} | daemoncores-kernel-${KVER}" \
+        "${ZDEP}" \
         "${DESC}" \
         /build/openzfs/module/zfs.ko /build/openzfs/module/spl.ko
       rm -rf /build/sys /build/openzfs
