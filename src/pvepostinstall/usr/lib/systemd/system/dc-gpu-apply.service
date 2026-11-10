@@ -1,0 +1,41 @@
+# Unit override of the base image's dc-gpu-apply.service (same path wins).
+#
+# Why the base ordering breaks this image: the base unit declares
+# Before=systemd-modules-load.service. Together with the zfs stack this image
+# carries (zfs-import-cache.service is After=systemd-modules-load.service, and
+# its mount chain is part of local-fs.target) that edge closes an ordering
+# cycle the base image cannot have:
+#   dc-gpu-apply -> local-fs.target -> zfs-import-cache
+#                   -> systemd-modules-load -> dc-gpu-apply
+# systemd breaks the cycle by deleting the start job of
+# systemd-tmpfiles-setup.service (and ldconfig.service) on every single boot —
+# run 42866413196 serial log: "dc-gpu-apply.service: Job
+# systemd-tmpfiles-setup.service/start deleted to break ordering cycle". With
+# tmpfiles-setup never running, anything shipped through tmpfiles is dead: the
+# installer's bootc-root-ssh.conf (root SSH authorized_keys), package state
+# and volatile directories included. The boot test then fails at the SSH step
+# (publickey: /root/.ssh/authorized_keys absent — guest serial dump confirms'
+# an empty /root/.ssh), and real deployments run a system with tmpfiles
+# silently skipped.
+#
+# The removed edge is dropped, not inverted: the GPU profile is a userspace
+# ld.so/ICD configuration (GPU-VARIANTS.md) and nothing in it gates kernel
+# module loading, so applying it after systemd-modules-load is harmless. The
+# dc-gpu-apply -> local-fs / tmpfiles / ldconfig After edges are kept, so the
+# profile is still applied after the file systems and before sysinit.target.
+[Unit]
+Description=Apply the stored GPU userspace profile (dc-gpu)
+Documentation=man:ld.so(8)
+DefaultDependencies=no
+# ldconfig.service rewrites /etc/ld.so.cache~ too; two concurrent runs race on the rename.
+After=local-fs.target systemd-tmpfiles-setup.service ldconfig.service
+Before=sysinit.target
+ConditionPathExists=/usr/sbin/dc-gpu
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/dc-gpu apply
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target
