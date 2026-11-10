@@ -250,13 +250,25 @@ tests:
     expect: +bootc
     diag: |
       dpkg-query -W -f='${Version}\n' proxmox-kernel-helper 2>&1; apt-cache policy proxmox-kernel-helper 2>&1 | head -n 6
-  - name: ifupdown2 ships unmodified upstream
+  - name: ifupdown2 rides the base image repack
+    # The vanilla split (77d340b) made this repo publish ifupdown2 unmodified
+    # upstream; the base image (debian-bootc) publishes its own +bootc repack
+    # though, and its higher version always wins the dpkg race — the plain
+    # "no +bootc suffix" guard broke when the base added its repack. The
+    # installed state is still honest: assert the repack is the BASE one by
+    # its load-bearing marker (the ifupdown2-autoconf first-boot hook, which
+    # the CI guest's DHCP network comes up through) and that the installed
+    # version is exactly the APT candidate (nothing local, untracked).
     run: |
       v=$(dpkg-query -W -f='${Version}' ifupdown2)
-      echo "$v" | grep -q '\+' && { echo "ifupdown2 is repacked ($v); vanilla = upstream nu"; exit 1; }
-      echo "ifupdown2 upstream: $v"
+      c=$(apt-cache policy ifupdown2 | sed -n 's/^ *Installed: //p')
+      [ "$v" = "$c" ] || { echo "ifupdown2 drift: installed=$v candidate=$c"; exit 1; }
+      test -x /usr/sbin/ifupdown2-autoconf
+      echo "ifupdown2 $v (base repack, autoconf hook present)"
     diag: |
       dpkg-query -W -f='${Version}\n' ifupdown2 2>&1; apt-cache policy ifupdown2 2>&1 | head -n 6
+      ls -l /usr/sbin/ifupdown2-autoconf 2>&1
+      head -3 /etc/network/interfaces 2>&1
 
   # ── libtemplate-perl mtime fix (the HTTP 500 root cause) ───────────────
   # libtemplate-perl is an arch package: its modules install under

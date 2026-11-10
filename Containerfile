@@ -77,6 +77,7 @@ RUN chmod +x /usr/sbin/policy-rc.d \
         ksmtuned \
         dnsmasq \
         proxmox-firewall \
+        openipmi \
         ifupdown2 \
     && { apt remove -y \
         linux-image-amd64 \
