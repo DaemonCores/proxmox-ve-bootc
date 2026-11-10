@@ -388,10 +388,19 @@ packages:
       DESC="${DESC}\n The OpenZFS ${ZFS_TAG} modules built against the published linux-headers deb"
       DESC="${DESC} of the ${KVER} tree (the ABI pair); one module ABI for both lanes"
       DESC="${DESC} of the release."
-      # Depends on the ACTUAL profile package the PVE host installs: the
-      # profile lane renames the image debs daemoncores-kernel-<profile>-<KVER>
-      # (owner 05/11 midi). The legacy spelling stays the non-profile fallback.
-      ZDEP="$([ -n "${HDR_PROFILE}" ] && echo "daemoncores-kernel-${HDR_PROFILE}-${KVER}" || echo "linux-image-${KVER} | daemoncores-kernel-${KVER}")"
+      # Depends on the ABI SLOT, never a profile package (owner order 14/11
+      # after the apt-history proof: install zfs-module-pve-x64v3 pulls in the
+      # VM kernel + removes the IA stack — the hardcoded
+      # daemoncores-kernel-${HDR_PROFILE}-${KVER} Depends CHAINS the profile
+      # and the two profile kernels are mutually Conflicting). Every kernel
+      # build of the release PROVIDES the virtual linux-image-<KVER> (= the
+      # built version; see the repack printf in the linux-image-profile class),
+      # so the zfs module deb settles on WHICHEVER profile kernel is installed
+      # and profiles no longer fight each other. IA and VM stay mutually
+      # Conflicting BY DESIGN: they populate the SAME /lib/modules/${KVER}/
+      # dir, so exactly one profile kernel may be installed at a time — the
+      # Conflicts is the documented SHARED SLOT, not a packaging accident.
+      ZDEP="linux-image-${KVER}"
       kernel_build_module "${SYS}" /build/openzfs/module \
         'make -C /build/openzfs/module -j"$(nproc)"' \
         "zfs-module-pve-${FLAV}" "${ZFS_VER}" "${KVER}" "zfs" \
