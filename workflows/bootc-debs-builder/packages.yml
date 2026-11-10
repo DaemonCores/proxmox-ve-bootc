@@ -350,6 +350,11 @@ packages:
       grep -q '^CONFIG_MODVERSIONS=y' "${SYS}/.config" \
         && { echo "ERROR: ${KVER} tree carries MODVERSIONS — one-module ABI broken" >&2; exit 1; }
 
+      # kbuild arch naming: the runner exports ARCH=amd64 job-wide but the
+      # kernel build system only knows x86 — map BEFORE configure, whose
+      # module-support probes are real kbuild test builds (an inherited
+      # ARCH=amd64 fails every probe and reports CONFIG_MODULES undefined).
+      export ARCH=x86
       ZFS_TAG="${ZFS_TAG:-zfs-2.4.4}"
       rm -rf /build/openzfs
       git clone --quiet --depth=1 --branch "${ZFS_TAG}" \
@@ -361,7 +366,9 @@ packages:
           --with-linux="$(readlink -e "${SYS}")" \
           --with-linux-obj="$(readlink -e "${SYS}")" ) \
         || { echo "ERROR: openzfs configure against ${SYS} failed" >&2; exit 1; }
-      export ARCH=x86_64
+      # the kbuild module build stays under the same mapping (kernel build
+      # system naming; there is no wrapper that wants the Debian naming).
+      export ARCH=x86
       # MODULE-ONLY target: the default `make` chains scripts/zfs-tests.sh -c
       # after the modules and fails off the module (proven make5). 2.x
       # merges the submodules: EXACTLY zfs.ko (zavl/znvpair/zunicode/
