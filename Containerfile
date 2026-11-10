@@ -78,11 +78,11 @@ RUN chmod +x /usr/sbin/policy-rc.d \
         dnsmasq \
         proxmox-firewall \
         ifupdown2 \
-    && apt remove -y \
+    && { apt remove -y \
         linux-image-amd64 \
         os-prober \
         $(dpkg -l 'linux-image-[0-9]*' | awk '/^ii/{print $2}' | grep -v proxmox) \
-    2>/dev/null || true \
+        2>/dev/null || true ; } \
     # Remove standard Debian AND daemoncores kernels (the base image ships the
     # profiled daemoncores-kernel-* lane) to keep only proxmox-default-kernel,
     # then prune stale module trees so only the active Proxmox kernel's modules
