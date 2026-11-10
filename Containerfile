@@ -83,10 +83,20 @@ RUN chmod +x /usr/sbin/policy-rc.d \
         os-prober \
         $(dpkg -l 'linux-image-[0-9]*' | awk '/^ii/{print $2}' | grep -v proxmox) \
     2>/dev/null || true \
-    # Remove standard Debian kernels to keep only proxmox-default-kernel
-    # which includes ZFS and KVM modules, then prune stale module trees so
-    # only the active Proxmox kernel's modules remain on disk.
-    && KVER=$(ls -1v /usr/lib/modules | tail -1) \
+    # Remove standard Debian AND daemoncores kernels (the base image ships the
+    # profiled daemoncores-kernel-* lane) to keep only proxmox-default-kernel,
+    # then prune stale module trees so only the active Proxmox kernel's modules
+    # remain on disk. KVER resolves from the installed proxmox-kernel package,
+    # never by lexical ls order: "7.2.15-x64v3-xanmod1" sorts AFTER
+    # "7.2.15-1-pve" and pruned the freshly-installed proxmox tree.
+    && dpkg --purge 2>/dev/null \
+        $(dpkg -l 'daemoncores-kernel-*' | awk '/^ii/{print $2}') \
+        || true \
+    && KVER=$(dpkg -l 'proxmox-kernel-*' | awk '/^ii/{print $2}' \
+        | grep -v -- '-signed$' | grep -v -- '-dbgsym' \
+        | sed -n 's/^proxmox-kernel-\([0-9][^ ]*\)$/\1/p' | head -1) \
+    && KVER="${KVER:-$(ls -1v /usr/lib/modules | tail -1)}" \
+    && [ -d "/usr/lib/modules/${KVER}" ] \
     && find /usr/lib/modules -mindepth 1 -maxdepth 1 ! -name "${KVER}" -exec rm -rf {} +
 
 # Post install patch
