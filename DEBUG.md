@@ -11,3 +11,6 @@
 
 ## TICK R-851 (2026-11-10 09:4x)
 - zfs-module-pve wave0: fix ARCH=x86 tient, spl-proc.c mourait zfs_gitrev.h absent (généré par make_gitrev.sh via Makefile.am in-tree seulement; module-only ne le court pas). FIX 6bc4236: make_gitrev.sh après clone + guard. Run ciblée 42784932243 en vol, watcher v11 sur rerun VE 41920282450 --failed.
+
+## TICK R-852 (2026-11-10 09:5x)
+- Run ciblée 42784932243: zfs-module-pve-x64v3 SUCCESS + publish APT (index vérifié). Verdict VE 41920282450: debs ok, images FAIL = base ghcr latest_arm64/latest_amd64 jamais publiée depuis le split (ghcr = buildenv only). Dispatch vanille 42786444311 plan complet pour publier les 2 bases; watcher v13 rerun VE ensuite.
