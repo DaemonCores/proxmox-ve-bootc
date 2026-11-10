@@ -12,5 +12,10 @@
 ## TICK R-851 (2026-11-10 09:4x)
 - zfs-module-pve wave0: fix ARCH=x86 tient, spl-proc.c mourait zfs_gitrev.h absent (généré par make_gitrev.sh via Makefile.am in-tree seulement; module-only ne le court pas). FIX 6bc4236: make_gitrev.sh après clone + guard. Run ciblée 42784932243 en vol, watcher v11 sur rerun VE 41920282450 --failed.
 
+## TICK R-863+ lane A (10/11 soir, continuation après instance morte)
+- Indépendamment re-prouvé: 'blscfg' est EMBARQUÉ dans le grubx64.efi déployé (strings grub_bls: /boot/loader/entries/ dans le binaire 0x9a5a2) — la théorie "command unknown sans module" est FAUSSE. Chaîne répliquée localement (QEMU/KVM, super-floppy FAT32 + shim→grub chain exact + vrais vmlinuz-7.0.14-28-pve + initramfs.img de l'image reconstruite localement f93f01d0): boot complet jusqu'au initrd, logs noyau verbeux sur ttyS0, ZFS v2.4.4-pve1 + Btrfs chargés. Verdict: le layout déployé (identique octet-pour-octet au run VERT debian-bootc 42835133637, mêmes binaires EFI 1853784 B) n'est PAS en cause; la seule inconnue restante côté CI = l'OVMF du runner (OVMF_CODE_4M.snakeoil.fd en SB=1... non: SB=0) qui en smm=off hange AVANT BDS (0 octet serial).
+- Fix déjà committé et poussé par l'instance précédente: e59a027 (workflows/tests.yml, amd64 secure_boot: 1). Ce tick: vérification indépendante des preuves + dispatch Full Pipeline run_debs=1 run_image=1.
+
+
 ## TICK R-852 (2026-11-10 09:5x)
 - Run ciblée 42784932243: zfs-module-pve-x64v3 SUCCESS + publish APT (index vérifié). Verdict VE 41920282450: debs ok, images FAIL = base ghcr latest_arm64/latest_amd64 jamais publiée depuis le split (ghcr = buildenv only). Dispatch vanille 42786444311 plan complet pour publier les 2 bases; watcher v13 rerun VE ensuite.
