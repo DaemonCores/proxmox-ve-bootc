@@ -13,6 +13,32 @@
 #                     so a failure can never be undiagnosable.
 
 boot_timeout: 900
+# Secure Boot ON for amd64 (same policy the debian-bootc base ships): the boot
+# test must run with the SMM-capable Secure Boot firmware pair. Without a
+# secure_boot category the harness boots `q35,smm=off` with the runner's
+# SB-capable OVMF CODE (OVMF_CODE_4M.snakeoil.fd on Ubuntu), and that firmware
+# build silently hangs before BDS on smm=off (reproduced 2026-11-10: 0 bytes on
+# the serial port, guest running forever — every `Build images (amd64)` failure
+# since the cut-over, incl. run 42839609404). With secure_boot: 1 the harness
+# provisions the varstore from the image's own sb.crt (shipped by the
+# grub-efi-amd64-signed rebuild) and boots the proven shim -> grub -> BLS chain
+# under OVMF secboot + smm=on (green in debian-bootc, run 42835133637). arm64
+# keeps Secure Boot OFF (declared explicitly so select_category matches its
+# tag): its harness branch already picks a non-secboot AAVMF for SB off.
+categories:
+  - name: default
+    arch: amd64
+    suffix: ""
+    secure_boot: 1
+    reference: true
+  # arm64: Secure Boot stays off (unchanged behavior; the arm64 branch of the
+  # harness picks a non-secboot AAVMF for SB off, so its boot path is sound).
+  # Declared so select_category matches the arm64 tag instead of erroring.
+  - name: default
+    arch: arm64
+    suffix: ""
+    secure_boot: 0
+    reference: true
 # Calibrated like debian-bootc (R-780): the image is already installed — no
 # dracut rebuild — so the post-reboot SSH wait is short; the harness calibrates
 # it per (arch, category) and caps it (BOOT_TIMEOUT_MAX, 600 s for slow arm64).
