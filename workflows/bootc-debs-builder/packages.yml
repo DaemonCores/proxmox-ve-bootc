@@ -210,11 +210,17 @@ packages:
     # side publish). /tmp/prior stays supported when an orchestrator feeds
     # prior-wave kernel debs; without them the published index is the source.
     build: |
-      # ONE build for every kernel variant (owner 13/11): the kernel release
-      # is the VERSION alone (7.2.15), the config is shared, so a single
-      # module serves every variant — no profile, no flavour dimension.
-      FLAV="${KERNEL_FLAVOUR:-x64v1}"
-      echo "zfs-module-pve: block entered (one build, baseline flavour ${FLAV})"
+      # ONE build per ABI PROFILE (owner 13/11, final): the kernel release
+      # is 7.2.15-ia / 7.2.15-vm and the flavour never enters the ABI — a
+      # module built at the v1 baseline serves every v1..v4 kernel of its
+      # profile. Two builds total, never one per flavour.
+      PROFILE="${VARIANT%%-*}"
+      case "${PROFILE}" in
+        ia|vm) ;;
+        *) echo "ERROR: zfs-module-pve variant '${VARIANT}' carries no profile (ia|vm)" >&2; exit 1 ;;
+      esac
+      FLAV="x64v1"
+      echo "zfs-module-pve: block entered (profile ${PROFILE}, baseline ${FLAV})"
       mkdir -p /build /debs
       # The published APT index the headers (and the kernel-seed deb) come
       # from: the DEBIAN side pages by default — THIS repo's index carries no
@@ -258,7 +264,7 @@ packages:
         # source of truth (owner 13/11); the generic aligned fallback and the
         # legacy -pve tree follow.
         HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
-          p ~ /^linux-headers-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
+          p ~ /^linux-headers-'"${PROFILE}"'-/ {print p}' /build/Packages \
           | sort -rV | head -1)
         test -n "${HDR_NAME}" \
           || HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
@@ -268,30 +274,8 @@ packages:
           || HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
             p ~ /-'"${FLAV}"'-xanmod1-pve$/ {print p}' /build/Packages | head -1)
         echo "zfs-module-pve: headers selected: ${HDR_NAME:-<none>}"
-        # The kernels' deb-glob indexes the IMAGE only: the headers deb is
-        # published as a flat debs-cache copy and never enters the APT
-        # index, so the stanza lookup above finds none. Fall back to the
-        # deterministic cache path built from the index's kernel package of
-        # THIS profile (linux-headers-<profile>-<kver>-<flavour>-xanmod1_
-        # <version>_<arch>.deb, proven present in debs-cache).
-        if test -z "${HDR_NAME}"; then
-          KPKG=$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
-            | sort -rV | head -1)
-          test -n "${KPKG}" \
-            || { echo "ERROR: no daemoncores-kernel-* in the index" >&2; exit 1; }
-          KVERN="${KPKG#daemoncores-kernel-}"
-          KVERN="${KVERN%-${FLAV}-xanmod1}"
-          KVER_DEB=$(awk -v want="${KPKG}" '
-            $0 == "" {getv=0}
-            getv && $1 == "Version:" {print $2; getv=0; exit}
-            $1 == "Package:" && $2 == want {getv=1}' /build/Packages)
-          test -n "${KVER_DEB}" \
-            || { echo "ERROR: no Version for ${KPKG} in the index" >&2; exit 1; }
-          HDR_FILE="linux-headers-${KVERN}_${KVER_DEB}_amd64.deb"
-          curl -fsSL "${BASE}/debs-cache/${HDR_FILE}" -o /build/headers.deb \
-            || { echo "ERROR: cannot fetch ${BASE}/debs-cache/${HDR_FILE}" >&2; exit 1; }
-          echo "zfs-module-pve: headers from the cache path ${HDR_FILE}"
-        fi
+        test -n "${HDR_NAME}" \
+          || { echo "ERROR: no linux-headers-${PROFILE}-* in the APT index (the kernel entry publishes them via its deb-glob; an empty index half means the site is broken)" >&2; exit 1; }
       fi
       # Filename of a package stanza, resolved by NAME (the deb file name is
       # NOT derived from the package name: the headers are republished as
@@ -344,7 +328,7 @@ packages:
       if ! test -s "${SYS}/Module.symvers" || ! test -s "${SYS}/.config"; then
         test -f /build/Packages || curl -fsSL "${BASE}/dists/trixie/main/binary-amd64/Packages" -o /build/Packages \
           || { echo "ERROR: cannot read the APT index ${BASE}/dists/trixie/main/binary-amd64/Packages" >&2; exit 1; }
-        KPKG=$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
+        KPKG=$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-'"${PROFILE}"'-/ {print p}' /build/Packages \
           | sort -rV | head -1)
         KPKG="${KPKG:-$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
           | sort -rV | head -1)}"
@@ -441,16 +425,19 @@ packages:
       ZDEP="linux-image-${KVER}"
       kernel_build_module "${SYS}" /build/openzfs/module \
         'make -C /build/openzfs/module -j"$(nproc)"' \
-        "zfs-module-pve" "${ZFS_VER}" "${KVER}" "zfs" \
+        "zfs-module-pve-${PROFILE}" "${ZFS_VER}" "${KVER}" "zfs" \
         "${ZDEP}" \
         "${DESC}" \
         /build/openzfs/module/zfs.ko /build/openzfs/module/spl.ko
       rm -rf /build/sys /build/openzfs
-    deb-glob: "zfs-module-pve_*"
+    deb-glob: "zfs-module-pve-{variant}*"
     variants:
-      # ONE build: the release string is 7.2.15 for every kernel variant and
-      # the config is shared, so the module is built once at the v1 baseline
-      # (owner 13/11: never rebuild a kernel module per variant).
-      x64v1:
+      # ONE build per ABI profile (owner 13/11): the release is 7.2.15-ia /
+      # 7.2.15-vm, the flavour never enters the ABI — two builds, never one
+      # per flavour.
+      ia:
+        when:
+          arch: amd64
+      vm:
         when:
           arch: amd64
