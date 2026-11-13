@@ -354,10 +354,15 @@ packages:
       fi
       test -s "${SYS}/Module.symvers" && test -s "${SYS}/.config" \
         || { echo "ERROR: ${SYS} seeded incomplete (Module.symvers/.config missing)" >&2; exit 1; }
-      # ABI guard (owner midi): the pair must NOT carry modversions CRCs —
-      # the aligned tree was merged with CONFIG_MODVERSIONS=n (modules.cfg).
+      # ABI note (owner 13/11): the FULL union config carries
+      # CONFIG_MODVERSIONS=y — the module is built WITH CRCs against the
+      # EXACT published tree (the seed's Module.symvers), which is the
+      # normal distro contract for out-of-tree modules. The old guard
+      # refused such a tree (it dated from the MODVERSIONS=n era) and
+      # would block every build after the union: the module must simply be
+      # rebuilt per published config, which this entry does.
       grep -q '^CONFIG_MODVERSIONS=y' "${SYS}/.config" \
-        && { echo "ERROR: ${KVER} tree carries MODVERSIONS — one-module ABI broken" >&2; exit 1; }
+        && echo "zfs-module-pve: tree carries MODVERSIONS=y (union config) — building WITH CRCs"
 
       # kbuild arch naming: the runner exports ARCH=amd64 job-wide but the
       # kernel build system only knows x86 — map BEFORE configure, whose
