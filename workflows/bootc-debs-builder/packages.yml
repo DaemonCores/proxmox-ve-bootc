@@ -275,7 +275,9 @@ packages:
             p ~ /-'"${FLAV}"'-xanmod1-pve$/ {print p}' /build/Packages | head -1)
         echo "zfs-module-pve: headers selected: ${HDR_NAME:-<none>}"
         test -n "${HDR_NAME}" \
-          || { echo "ERROR: no linux-headers-${PROFILE}-* in the APT index (the kernel entry publishes them via its deb-glob; an empty index half means the site is broken)" >&2; exit 1; }
+          || { echo "ERROR: no linux-headers-${PROFILE}-* in the APT index" \
+                 "(the kernel entry publishes them via its deb-glob;" \
+                 "an empty index half means the site is broken)" >&2; exit 1; }
       fi
       # Filename of a package stanza, resolved by NAME (the deb file name is
       # NOT derived from the package name: the headers are republished as
