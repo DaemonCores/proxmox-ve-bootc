@@ -219,8 +219,11 @@ packages:
         ia|vm) ;;
         *) echo "ERROR: zfs-module-pve variant '${VARIANT}' carries no profile (ia|vm)" >&2; exit 1 ;;
       esac
-      FLAV="x64v1"
-      echo "zfs-module-pve: block entered (profile ${PROFILE}, baseline ${FLAV})"
+      # Until the release string drops the flavour (7.2.15-<profile>), the
+      # module must target the flavour of the kernel it will load on:
+      # KERNEL_FLAVOUR pins it (default x64v3 = the hosts' kernel).
+      FLAV="${KERNEL_FLAVOUR:-x64v3}"
+      echo "zfs-module-pve: block entered (profile ${PROFILE}, kernel flavour ${FLAV})"
       mkdir -p /build /debs
       # The published APT index the headers (and the kernel-seed deb) come
       # from: the DEBIAN side pages by default — THIS repo's index carries no
@@ -264,7 +267,7 @@ packages:
         # source of truth (owner 13/11); the generic aligned fallback and the
         # legacy -pve tree follow.
         HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
-          p ~ /^linux-headers-'"${PROFILE}"'-/ {print p}' /build/Packages \
+          p ~ /^linux-headers-'"${PROFILE}"'-.*-'"${FLAV}"'-/ {print p}' /build/Packages \
           | sort -rV | head -1)
         test -n "${HDR_NAME}" \
           || HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
@@ -330,7 +333,7 @@ packages:
       if ! test -s "${SYS}/Module.symvers" || ! test -s "${SYS}/.config"; then
         test -f /build/Packages || curl -fsSL "${BASE}/dists/trixie/main/binary-amd64/Packages" -o /build/Packages \
           || { echo "ERROR: cannot read the APT index ${BASE}/dists/trixie/main/binary-amd64/Packages" >&2; exit 1; }
-        KPKG=$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-'"${PROFILE}"'-/ {print p}' /build/Packages \
+        KPKG=$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-'"${PROFILE}"'-.*-'"${FLAV}"'-/ {print p}' /build/Packages \
           | sort -rV | head -1)
         KPKG="${KPKG:-$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
           | sort -rV | head -1)}"
