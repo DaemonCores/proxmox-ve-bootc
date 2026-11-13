@@ -210,10 +210,20 @@ packages:
     # side publish). /tmp/prior stays supported when an orchestrator feeds
     # prior-wave kernel debs; without them the published index is the source.
     build: |
-      FLAV="${VARIANT}"
+      # Variant = <profile>-<flavour> (ia-x64v3, vm-x64v3, ...): the kernel
+      # twins differ in their built struct module (config-dependent), so the
+      # zfs pair MUST be built per profile — one deb per twin, each depending
+      # on its own kernel (owner 13/11: IA is a first-class host profile,
+      # the kernel model works on both).
+      PROFILE="${VARIANT%%-*}"
+      FLAV="${VARIANT#*-}"
+      case "${PROFILE}" in
+        ia|vm) ;;
+        *) echo "ERROR: zfs-module-pve variant '${VARIANT}' carries no profile (ia|vm) prefix" >&2; exit 1 ;;
+      esac
       test -n "${FLAV}" \
         || { echo "ERROR: zfs-module-pve needs a flavour variant" >&2; exit 1; }
-      echo "zfs-module-pve: block entered (flavour ${FLAV})"
+      echo "zfs-module-pve: block entered (profile ${PROFILE}, flavour ${FLAV})"
       mkdir -p /build /debs
       # The published APT index the headers (and the kernel-seed deb) come
       # from: the DEBIAN side pages by default — THIS repo's index carries no
@@ -252,13 +262,12 @@ packages:
         echo "zfs-module-pve: reading the APT index ${IDX}"
         curl -fsSL "${IDX}" -o /build/Packages \
           || { echo "ERROR: cannot read the APT index ${IDX}" >&2; exit 1; }
-        # PROFILES first (owner 05/11 midi: the profile identity lives in the
-        # packaging — the headers Package carries the profile infix while the
-        # tree keeps the SHARED UTS release). The PVE host kernel = the VM
-        # profile (THP never), so prefer linux-headers-vm-<flav> explicitly;
-        # the generic aligned fallback and the legacy -pve tree follow.
+        # PROFILES first: the headers Package carries the profile infix while
+        # the tree keeps the SHARED UTS release. The variant's profile IS the
+        # source of truth (owner 13/11); the generic aligned fallback and the
+        # legacy -pve tree follow.
         HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
-          p ~ /^linux-headers-vm-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
+          p ~ /^linux-headers-'"${PROFILE}"'-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
           | sort -rV | head -1)
         test -n "${HDR_NAME}" \
           || HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
@@ -322,7 +331,7 @@ packages:
       if ! test -s "${SYS}/Module.symvers" || ! test -s "${SYS}/.config"; then
         test -f /build/Packages || curl -fsSL "${BASE}/dists/trixie/main/binary-amd64/Packages" -o /build/Packages \
           || { echo "ERROR: cannot read the APT index ${BASE}/dists/trixie/main/binary-amd64/Packages" >&2; exit 1; }
-        KPKG=$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-vm-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
+        KPKG=$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-'"${PROFILE}"'-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
           | sort -rV | head -1)
         KPKG="${KPKG:-$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
           | sort -rV | head -1)}"
@@ -400,25 +409,41 @@ packages:
       # Conflicting BY DESIGN: they populate the SAME /lib/modules/${KVER}/
       # dir, so exactly one profile kernel may be installed at a time — the
       # Conflicts is the documented SHARED SLOT, not a packaging accident.
-      ZDEP="linux-image-${KVER}"
+      # The per-profile deb depends on ITS profile kernel: the earlier
+      # chaining problem came from ONE deb serving both twins and picking
+      # whichever kernel was installed; with one deb per twin the dependency
+      # is exact by construction.
+      ZDEP="daemoncores-kernel-${PROFILE}-${KVER} (>= ${KVER})"
       kernel_build_module "${SYS}" /build/openzfs/module \
         'make -C /build/openzfs/module -j"$(nproc)"' \
-        "zfs-module-pve-${FLAV}" "${ZFS_VER}" "${KVER}" "zfs" \
+        "zfs-module-pve-${PROFILE}-${FLAV}" "${ZFS_VER}" "${KVER}" "zfs" \
         "${ZDEP}" \
         "${DESC}" \
         /build/openzfs/module/zfs.ko /build/openzfs/module/spl.ko
       rm -rf /build/sys /build/openzfs
     deb-glob: "zfs-module-pve-{variant}*"
     variants:
-      x64v3:
+      ia-x64v3:
         when:
           arch: amd64
-      x64v1:
+      ia-x64v1:
         when:
           arch: amd64
-      x64v2:
+      ia-x64v2:
         when:
           arch: amd64
-      x64v4:
+      ia-x64v4:
+        when:
+          arch: amd64
+      vm-x64v3:
+        when:
+          arch: amd64
+      vm-x64v1:
+        when:
+          arch: amd64
+      vm-x64v2:
+        when:
+          arch: amd64
+      vm-x64v4:
         when:
           arch: amd64
