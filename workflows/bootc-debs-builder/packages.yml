@@ -277,8 +277,30 @@ packages:
           || HDR_NAME=$(awk '$1=="Package:" && $2 ~ /^linux-headers-/ {p=$2}
             p ~ /-'"${FLAV}"'-xanmod1-pve$/ {print p}' /build/Packages | head -1)
         echo "zfs-module-pve: headers selected: ${HDR_NAME:-<none>}"
-        test -n "${HDR_NAME}" \
-          || { echo "ERROR: no linux-headers for flavour ${FLAV} in the APT index ${IDX}" >&2; exit 1; }
+        # The kernels' deb-glob indexes the IMAGE only: the headers deb is
+        # published as a flat debs-cache copy and never enters the APT
+        # index, so the stanza lookup above finds none. Fall back to the
+        # deterministic cache path built from the index's kernel package of
+        # THIS profile (linux-headers-<profile>-<kver>-<flavour>-xanmod1_
+        # <version>_<arch>.deb, proven present in debs-cache).
+        if test -z "${HDR_NAME}"; then
+          KPKG=$(awk '$1=="Package:" {p=$2} p ~ /^daemoncores-kernel-'"${PROFILE}"'-.*-'"${FLAV}"'-xanmod1$/ {print p}' /build/Packages \
+            | sort -rV | head -1)
+          test -n "${KPKG}" \
+            || { echo "ERROR: no daemoncores-kernel-${PROFILE}-*-${FLAV}-xanmod1 in the index" >&2; exit 1; }
+          KVERN="${KPKG#daemoncores-kernel-${PROFILE}-}"
+          KVERN="${KVERN%-${FLAV}-xanmod1}"
+          KVER_DEB=$(awk -v want="${KPKG}" '
+            $0 == "" {getv=0}
+            getv && $1 == "Version:" {print $2; getv=0; exit}
+            $1 == "Package:" && $2 == want {getv=1}' /build/Packages)
+          test -n "${KVER_DEB}" \
+            || { echo "ERROR: no Version for ${KPKG} in the index" >&2; exit 1; }
+          HDR_FILE="linux-headers-${PROFILE}-${KVERN}-${FLAV}-xanmod1_${KVER_DEB}_amd64.deb"
+          curl -fsSL "${BASE}/debs-cache/${HDR_FILE}" -o /build/headers.deb \
+            || { echo "ERROR: cannot fetch ${BASE}/debs-cache/${HDR_FILE}" >&2; exit 1; }
+          echo "zfs-module-pve: headers from the cache path ${HDR_FILE}"
+        fi
       fi
       # Filename of a package stanza, resolved by NAME (the deb file name is
       # NOT derived from the package name: the headers are republished as
@@ -339,8 +361,15 @@ packages:
         test -n "${KPKG}" \
           || { echo "ERROR: no daemoncores-kernel-*-${FLAV}-xanmod1 deb in the APT index to seed the module tree from" >&2; exit 1; }
         rm -rf /build/kseed
-        curl -fsSL "${BASE}/$(_filename_by_pkg "${KPKG}")" -o /build/kernel.deb \
-          || { echo "ERROR: cannot download ${KPKG}" >&2; exit 1; }
+        if ! curl -fsSL "${BASE}/$(_filename_by_pkg "${KPKG}")" -o /build/kernel.deb 2>/dev/null; then
+          # Unindexed flat copy fallback (debs-cache carries every built deb).
+          KFILE="${KPKG}_$(awk -v want="${KPKG}" '
+            $0 == "" {getv=0}
+            getv && $1 == "Version:" {print $2; getv=0; exit}
+            $1 == "Package:" && $2 == want {getv=1}' /build/Packages)_amd64.deb"
+          curl -fsSL "${BASE}/debs-cache/${KFILE}" -o /build/kernel.deb \
+            || { echo "ERROR: cannot download ${KPKG}" >&2; exit 1; }
+        fi
         mkdir -p /build/kseed
         dpkg-deb -x /build/kernel.deb /build/kseed
         SEED="$(find /build/kseed -type d -path '*/usr/lib/linux-kernel-build*' -maxdepth 6 | head -1)"
